@@ -1,13 +1,15 @@
 use std::{path::Path, result};
 
 use rusqlite::{params, types::ToSqlOutput, Connection, OpenFlags, ToSql};
+use secret::SymmetricKeyError;
 use traits::{KeyStoreId, KeyStoreTrait, KeyStoreValue};
 
-#[cfg(feature = "openmls_keys")]
-pub mod openmls;
-#[cfg(feature = "secret")]
+pub mod keys;
 pub mod secret;
 pub mod traits;
+pub mod types;
+
+mod util;
 
 pub struct KeyStoreIdentifier([u8; 32]);
 
@@ -17,6 +19,13 @@ pub enum Error {
     ReadError,
     UpdateError,
     DeleteError,
+    SymmetricKeyError(SymmetricKeyError),
+}
+
+impl From<SymmetricKeyError> for Error {
+    fn from(e: SymmetricKeyError) -> Self {
+        Self::SymmetricKeyError(e)
+    }
 }
 
 type Result<T> = result::Result<T, Error>;
@@ -97,7 +106,7 @@ impl KeyStoreTrait for KeyStore {
                 log::error!("SQL ERROR: {:?}", e);
                 Error::ReadError
             })?;
-        Ok(V::deserialize(&result))
+        V::deserialize(&result)
     }
 
     fn update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
@@ -137,9 +146,7 @@ mod tests {
 
     use evercrypt::digest::sha256;
 
-    #[cfg(feature = "openmls_keys")]
-    use crate::traits::OpenMlsKeyGenerator;
-    use crate::{secret::Secret, traits::KeyStoreTrait};
+    use crate::{secret::Secret, traits::KeyStoreTrait, types::SymmetricKeyType};
 
     use super::*;
 
@@ -159,50 +166,36 @@ mod tests {
         // let ks = KeyStore::new(Path::new("test-db.sqlite"));
         // let ks = KeyStore::open(Path::new("test-db.sqlite"));
         let ks = KeyStore::default();
-        let secret = Secret::from(vec![3u8; 32]);
+        let secret = Secret::try_from(vec![3u8; 32], types::SymmetricKeyType::Aes256, &[]).unwrap();
         let id = KeyId {
             id: b"Key Id 1".to_vec(),
         };
 
         ks.store(&id, &secret).unwrap();
-        let secret_again: Secret = ks.read(&id).unwrap();
+        let secret_again = ks.read(&id).unwrap();
         assert_eq!(secret, secret_again);
 
-        let secret2 = Secret::from(vec![4u8; 32]);
+        let secret2 =
+            Secret::try_from(vec![4u8; 32], types::SymmetricKeyType::Aes256, &[]).unwrap();
         let id2 = KeyId {
             id: b"Key Id 2".to_vec(),
         };
 
         ks.store(&id2, &secret2).unwrap();
-        let secret_again: Secret = ks.read(&id2).unwrap();
+        let secret_again = ks.read(&id2).unwrap();
         assert_eq!(secret2, secret_again);
-        let secret_again: Secret = ks.read(&id).unwrap();
+        let secret_again = ks.read(&id).unwrap();
         assert_eq!(secret, secret_again);
 
         ks.delete(&id2).unwrap();
         let secret_again: Result<Secret> = ks.read(&id2);
-        assert_eq!(Err(Error::ReadError), secret_again);
+        assert_eq!(Error::ReadError, secret_again.err().unwrap());
 
-        let secret_again: Secret = ks.read(&id).unwrap();
+        let secret_again = ks.read(&id).unwrap();
         assert_eq!(secret, secret_again);
 
         ks.update(&id, &secret2).unwrap();
-        let secret_again: Secret = ks.read(&id).unwrap();
+        let secret_again = ks.read(&id).unwrap();
         assert_eq!(secret2, secret_again);
-
-        #[cfg(feature = "openmls_keys")]
-        fn openmls_keys(ks: &KeyStore) {
-            let id3 = KeyId {
-                id: b"New Key Id".to_vec(),
-            };
-            ks.new_secret(&id3, 32).unwrap();
-            let secret_again: Secret = ks.read(&id3).unwrap();
-            println!("{:x?}", secret_again);
-        }
-
-        #[cfg(not(feature = "openmls_keys"))]
-        fn openmls_keys(_: &KeyStore) {}
-
-        openmls_keys(&ks);
     }
 }

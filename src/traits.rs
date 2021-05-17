@@ -1,7 +1,14 @@
 #[cfg(feature = "openmls_keys")]
 use openmls::prelude::{CiphersuiteName, CredentialType, Extension, SignatureScheme};
 
-use crate::{KeyStoreIdentifier, Result};
+use crate::{
+    keys::PublicKey,
+    secret::Secret,
+    types::{
+        AeadType, AsymmetricKeyType, Ciphertext, KemOutput, Plaintext, Signature, SymmetricKeyType,
+    },
+    KeyStoreIdentifier, Result,
+};
 
 /// The main Key Store trait
 pub trait KeyStoreTrait {
@@ -11,14 +18,22 @@ pub trait KeyStoreTrait {
     fn delete(&self, k: &impl KeyStoreId) -> Result<()>;
 }
 
+/// This private module is used to hide functionality of public traits.
+pub(crate) mod private {
+    use crate::Result;
+
+    #[doc(hidden)]
+    pub trait PrivateKeyStoreValue {
+        fn serialize(&self) -> Vec<u8>;
+        fn deserialize(raw: &[u8]) -> Result<Self>
+        where
+            Self: Sized;
+    }
+}
+
 /// Any value that is stored in the key store must implement this trait.
 /// In most cases these are the raw bytes of the object.
-pub trait KeyStoreValue {
-    fn serialize(&self) -> Vec<u8>;
-    fn deserialize(raw: &[u8]) -> Self
-    where
-        Self: Sized;
-}
+pub trait KeyStoreValue: private::PrivateKeyStoreValue {}
 
 /// Any value that is used as key to index values in the key store mut implement
 /// this trait.
@@ -26,26 +41,138 @@ pub trait KeyStoreId: Eq {
     fn id(&self) -> KeyStoreIdentifier;
 }
 
-/// Generate OpenMLS secrets, credential bundles, and key package bundles.
-/// This requires the `openmls_keys` feature to be enabled.
-#[cfg(feature = "openmls_keys")]
-pub trait OpenMlsKeyGenerator {
+// === Crypto traits === //
+
+/// Check whether the key store supports certain functionality.
+pub trait Supports {
+    fn secret_generation(&self) -> Vec<SymmetricKeyType>;
+    fn key_pair_generation(&self) -> Vec<AsymmetricKeyType>;
+}
+
+/// Generate keys.
+pub trait GenerateKeys {
     fn new_secret(&self, k: &impl KeyStoreId, secret_len: usize) -> Result<()>;
-    fn new_credential_bundle(
-        &self,
-        _k: &impl KeyStoreId,
-        _c_type: CredentialType,
-        _scheme: SignatureScheme,
-    ) {
-        todo!();
+    fn new_key_pair<P>(&self, k: &impl KeyStoreId, key_type: AsymmetricKeyType) -> Result<P>;
+}
+
+/// HKDF
+pub trait HkdfDerive {
+    /// HKDF extract
+    /// Panics if not implemented.
+    /// This can also be used to compute an HMAC.
+    /// ☣️ **NOTE** that this returns secret key material.
+    fn extract(&self, _ikm: &impl KeyStoreId, _salt: &[u8]) -> Secret {
+        unimplemented!();
     }
-    fn new_key_package_bundle(
-        &self,
-        _k: &impl KeyStoreId,
-        _credential_id: impl KeyStoreId,
-        _ciphersuite: CiphersuiteName,
-        _extensions: &[Box<dyn Extension>],
-    ) {
-        todo!();
+
+    /// HKDF expand
+    /// Panics if not implemented.
+    /// ☣️ **NOTE** that this returns secret key material.
+    fn expand(&self, _prk: &impl KeyStoreId, _info: &[u8], _out_len: usize) -> Secret {
+        unimplemented!();
     }
+
+    /// HKDF
+    /// Compute HKDF on the input and store it with the `okm` id.
+    /// This is the only function that must be implemented.
+    fn hkdf(
+        &self,
+        ikm: &impl KeyStoreId,
+        salt: &[u8],
+        info: &[u8],
+        out_len: usize,
+        okm: &impl KeyStoreId,
+    );
+
+    /// HKDF
+    /// Panics if not implemented.
+    /// ☣️ **NOTE** that this returns secret key material.
+    fn hkdf_export(
+        &self,
+        _ikm: &impl KeyStoreId,
+        _salt: &[u8],
+        _info: &[u8],
+        _out_len: usize,
+    ) -> Secret {
+        unimplemented!();
+    }
+}
+
+/// AEAD
+pub trait Aead {
+    fn seal(
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &[u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Ciphertext>;
+    fn open(
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        cipher_text: &[u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Plaintext>;
+}
+
+/// HPKE
+pub trait Hpke {
+    /// Encrypt the `payload` to the public key stored for `key_id`.
+    fn seal(
+        hpke: hpke::Hpke,
+        key_id: &impl KeyStoreId,
+        info: &[u8],
+        aad: &[u8],
+        payload: &[u8],
+    ) -> Result<(Ciphertext, KemOutput)>;
+
+    /// Encrypt the `payload` to the public `key`.
+    fn seal_to_pk(
+        hpke: hpke::Hpke,
+        key: &PublicKey,
+        info: &[u8],
+        aad: &[u8],
+        payload: &[u8],
+    ) -> Result<(Ciphertext, KemOutput)>;
+
+    /// Encrypt the secret stored for `secret_id` to the public key stored for `key_id`.
+    fn seal_secret(
+        hpke: hpke::Hpke,
+        key_id: &impl KeyStoreId,
+        info: &[u8],
+        aad: &[u8],
+        secret_id: &impl KeyStoreId,
+    ) -> Result<(Ciphertext, KemOutput)>;
+
+    /// Encrypt the secret stored for `secret_id` to the public `key`.
+    fn seal_secret_to_pk(
+        hpke: hpke::Hpke,
+        key: &PublicKey,
+        info: &[u8],
+        aad: &[u8],
+        secret_id: &impl KeyStoreId,
+    ) -> Result<(Ciphertext, KemOutput)>;
+
+    /// Open an HPKE `cipher_text` with the private key of the given `key_id`.
+    fn open(
+        hpke: hpke::Hpke,
+        key_id: &impl KeyStoreId,
+        cipher_text: &Ciphertext,
+        kem: &KemOutput,
+        info: &[u8],
+        aad: &[u8],
+    ) -> Result<Plaintext>;
+
+    /// Derive a new HPKE keypair from the secret at `ikm_id`.
+    fn derive_key_pair(hpke: hpke::Hpke, ikm_id: &impl KeyStoreId) -> Result<()>;
+}
+
+pub trait Sign {
+    fn sign(key_id: &impl KeyStoreId, payload: &[u8]) -> Result<Signature>;
+}
+
+pub trait Verify {
+    fn verify(key_id: &impl KeyStoreId, signature: &Signature, payload: &[u8]) -> Result<()>;
+    fn verify_with_pk(key: &PublicKey, signature: &Signature, payload: &[u8]) -> Result<()>;
 }
