@@ -1,6 +1,3 @@
-#[cfg(feature = "openmls_keys")]
-use openmls::prelude::{CiphersuiteName, CredentialType, Extension, SignatureScheme};
-
 use crate::{
     keys::PublicKey,
     secret::Secret,
@@ -117,10 +114,10 @@ pub trait Aead {
 }
 
 /// HPKE
-pub trait Hpke {
+pub trait Hpke<HpkeImpl> {
     /// Encrypt the `payload` to the public key stored for `key_id`.
     fn seal(
-        hpke: hpke::Hpke,
+        hpke: HpkeImpl,
         key_id: &impl KeyStoreId,
         info: &[u8],
         aad: &[u8],
@@ -129,7 +126,7 @@ pub trait Hpke {
 
     /// Encrypt the `payload` to the public `key`.
     fn seal_to_pk(
-        hpke: hpke::Hpke,
+        hpke: HpkeImpl,
         key: &PublicKey,
         info: &[u8],
         aad: &[u8],
@@ -138,7 +135,7 @@ pub trait Hpke {
 
     /// Encrypt the secret stored for `secret_id` to the public key stored for `key_id`.
     fn seal_secret(
-        hpke: hpke::Hpke,
+        hpke: HpkeImpl,
         key_id: &impl KeyStoreId,
         info: &[u8],
         aad: &[u8],
@@ -147,7 +144,7 @@ pub trait Hpke {
 
     /// Encrypt the secret stored for `secret_id` to the public `key`.
     fn seal_secret_to_pk(
-        hpke: hpke::Hpke,
+        hpke: HpkeImpl,
         key: &PublicKey,
         info: &[u8],
         aad: &[u8],
@@ -156,7 +153,7 @@ pub trait Hpke {
 
     /// Open an HPKE `cipher_text` with the private key of the given `key_id`.
     fn open(
-        hpke: hpke::Hpke,
+        hpke: HpkeImpl,
         key_id: &impl KeyStoreId,
         cipher_text: &Ciphertext,
         kem: &KemOutput,
@@ -165,7 +162,7 @@ pub trait Hpke {
     ) -> Result<Plaintext>;
 
     /// Derive a new HPKE keypair from the secret at `ikm_id`.
-    fn derive_key_pair(hpke: hpke::Hpke, ikm_id: &impl KeyStoreId) -> Result<()>;
+    fn derive_key_pair(hpke: HpkeImpl, ikm_id: &impl KeyStoreId) -> Result<()>;
 }
 
 pub trait Sign {

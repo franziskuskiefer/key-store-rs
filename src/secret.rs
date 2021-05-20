@@ -4,7 +4,7 @@ use std::{
     fmt::Debug,
 };
 
-use evercrypt::prelude::get_random_vec;
+use rand::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
 use crate::{
@@ -81,9 +81,27 @@ impl Debug for Secret {
 }
 
 impl Secret {
+    #[cfg(features = "random")]
     pub(crate) fn random(len: usize, key_type: SymmetricKeyType, label: &[u8]) -> Self {
+        let mut value = vec![0u8; len];
+        OsRng.fill_bytes(&mut value);
         Self {
-            value: get_random_vec(len),
+            value,
+            key_type,
+            label: label.to_vec(),
+        }
+    }
+
+    pub(crate) fn random_bor<T: CryptoRng + RngCore>(
+        randomness: &mut T,
+        len: usize,
+        key_type: SymmetricKeyType,
+        label: &[u8],
+    ) -> Self {
+        let mut value = vec![0u8; len];
+        randomness.fill_bytes(&mut value);
+        Self {
+            value,
             key_type,
             label: label.to_vec(),
         }
