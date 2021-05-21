@@ -31,6 +31,7 @@ pub enum Error {
     EncryptionError(String),
     DecryptionError(String),
     CryptoLibError(String),
+    InvalidSignature(String),
 }
 
 impl From<SymmetricKeyError> for Error {

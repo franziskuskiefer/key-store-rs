@@ -45,6 +45,20 @@ impl TryFrom<u32> for AsymmetricKeyType {
     }
 }
 
+impl TryFrom<HpkeKemType> for AsymmetricKeyType {
+    type Error = AsymmetricKeyError;
+
+    fn try_from(kem: HpkeKemType) -> Result<Self, Self::Error> {
+        match kem {
+            HpkeKemType::DhKemP256 => Ok(Self::P256),
+            HpkeKemType::DhKem25519 => Ok(Self::X25519),
+            HpkeKemType::DhKem448 | HpkeKemType::DhKemP384 | HpkeKemType::DhKemP521 => {
+                Err(AsymmetricKeyError::InvalidKeyType(usize::MAX))
+            }
+        }
+    }
+}
+
 impl Into<u32> for AsymmetricKeyType {
     fn into(self) -> u32 {
         match self {
@@ -115,14 +129,17 @@ impl Into<u32> for SymmetricKeyType {
 #[repr(u16)]
 /// AEAD types
 pub enum AeadType {
-    /// AES-GCM 128
-    Aes128Gcm,
+    /// AES GCM 128
+    Aes128Gcm = 0x0001,
 
-    /// AES-GCM 256
-    Aes256Gcm,
+    /// AES GCM 256
+    Aes256Gcm = 0x0002,
 
-    /// ChaCha20-Poly1305
-    ChaCha20Poly1305,
+    /// ChaCha20 Poly1305
+    ChaCha20Poly1305 = 0x0003,
+
+    /// HPKE Export-only
+    Export = 0xFFFF,
 }
 
 #[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
@@ -137,6 +154,40 @@ pub enum HashType {
     Sha3_256,
     Sha3_384,
     Sha3_512,
+}
+
+#[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
+#[repr(u16)]
+/// KEM HPKE types
+pub enum HpkeKemType {
+    /// DH KEM on P256
+    DhKemP256 = 0x0010,
+
+    /// DH KEM on P384
+    DhKemP384 = 0x0011,
+
+    /// DH KEM on P521
+    DhKemP521 = 0x0012,
+
+    /// DH KEM on x25519
+    DhKem25519 = 0x0020,
+
+    /// DH KEM on x448
+    DhKem448 = 0x0021,
+}
+
+#[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
+#[repr(u16)]
+/// KDF HPKE types
+pub enum HpkeKdfType {
+    /// HKDF SHA 256
+    HkdfSha256 = 0x0001,
+
+    /// HKDF SHA 384
+    HkdfSha384 = 0x0002,
+
+    /// HKDF SHA 512
+    HkdfSha512 = 0x0003,
 }
 
 pub struct Ciphertext {
@@ -173,6 +224,31 @@ pub struct KemOutput {
     value: Vec<u8>,
 }
 
+impl KemOutput {
+    pub(crate) fn new(value: Vec<u8>) -> Self {
+        Self { value }
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.value
+    }
+}
+
 pub struct Signature {
     value: Vec<u8>,
+    hash_type: Option<HashType>,
+}
+
+impl Signature {
+    pub(crate) fn new(value: Vec<u8>, hash_type: impl Into<Option<HashType>>) -> Self {
+        Self {
+            value,
+            hash_type: hash_type.into(),
+        }
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.value
+    }
+    pub fn hash_type(&self) -> Option<HashType> {
+        self.hash_type
+    }
 }

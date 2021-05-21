@@ -1,15 +1,26 @@
-use std::{convert::TryInto, path::Path};
+use std::{
+    convert::{TryFrom, TryInto},
+    path::Path,
+};
 
 use crate::{
     keys::{AsymmetricKeyError, PrivateKey, PublicKey},
     secret::Secret,
     traits::{
-        GenerateKeys, HkdfDerive, KeyStoreId, KeyStoreTrait, KeyStoreValue, Open, Seal, Supports,
+        GenerateKeys, HkdfDerive, HpkeDerive, HpkeOpen, HpkeSeal, KeyStoreId, KeyStoreTrait,
+        KeyStoreValue, Open, Seal, Sign, Supports, Verify,
     },
-    types::{AeadType, AsymmetricKeyType, Ciphertext, HashType, Plaintext, SymmetricKeyType},
+    types::{
+        AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemOutput,
+        Plaintext, Signature, SymmetricKeyType,
+    },
     Error, KeyStoreIdentifier, Result,
 };
-use evercrypt::{aead, ed25519, hkdf, hmac, p256, x25519};
+use evercrypt::{
+    aead, digest as evercrypt_digest, ed25519, hkdf, hmac, p256, prelude::p256_ecdsa_random_nonce,
+    signature, x25519,
+};
+use hpke::{self, Hpke};
 use rusqlite::{params, types::ToSqlOutput, Connection, OpenFlags, ToSql};
 
 pub struct KeyStore {
@@ -270,6 +281,7 @@ fn aead_type(aead: AeadType) -> Result<aead::Mode> {
         AeadType::Aes128Gcm => Ok(aead::Mode::Aes128Gcm),
         AeadType::Aes256Gcm => Ok(aead::Mode::Aes256Gcm),
         AeadType::ChaCha20Poly1305 => Ok(aead::Mode::Chacha20Poly1305),
+        AeadType::Export => Err(Error::UnsupportedAlgorithm(format!("HPKE Export AEAD"))),
     }
 }
 
@@ -311,6 +323,239 @@ impl Open for KeyStore {
         )
         .map_err(|e| Error::DecryptionError(format!("Decryption encrypting: {:?}", e)))?;
         Ok(Plaintext::new(pt))
+    }
+}
+
+impl HpkeSeal for KeyStore {
+    fn seal(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        info: &[u8],
+        aad: &[u8],
+        payload: &[u8],
+    ) -> Result<(Vec<u8>, KemOutput)> {
+        let pk_r: PublicKey = self.read(key_id)?;
+        self.seal_to_pk(kem, kdf, aead, &pk_r, info, aad, payload)
+    }
+
+    fn seal_to_pk(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        key: &PublicKey,
+        info: &[u8],
+        aad: &[u8],
+        payload: &[u8],
+    ) -> Result<(Vec<u8>, KemOutput)> {
+        let hpke = Hpke::new(
+            hpke::Mode::Base,
+            (kem as u16).try_into().unwrap(),
+            (kdf as u16).try_into().unwrap(),
+            (aead as u16).try_into().unwrap(),
+        );
+        let (kem_output, ciphertext) = hpke
+            .seal(&key.as_slice().into(), info, aad, payload, None, None, None)
+            .map_err(|e| Error::CryptoLibError(format!("HPKE Seal error: {:?}", e)))?;
+        Ok((ciphertext, KemOutput::new(kem_output)))
+    }
+
+    fn seal_secret(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        info: &[u8],
+        aad: &[u8],
+        secret_id: &impl KeyStoreId,
+    ) -> Result<(Vec<u8>, KemOutput)> {
+        let pk_r: PublicKey = self.read(key_id)?;
+        self.seal_secret_to_pk(kem, kdf, aead, &pk_r, info, aad, secret_id)
+    }
+
+    fn seal_secret_to_pk(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        key: &PublicKey,
+        info: &[u8],
+        aad: &[u8],
+        secret_id: &impl KeyStoreId,
+    ) -> Result<(Vec<u8>, KemOutput)> {
+        let secret: Secret = self.read(secret_id)?;
+        let hpke = Hpke::new(
+            hpke::Mode::Base,
+            (kem as u16).try_into().unwrap(),
+            (kdf as u16).try_into().unwrap(),
+            (aead as u16).try_into().unwrap(),
+        );
+        let (kem_output, ciphertext) = hpke
+            .seal(
+                &key.as_slice().into(),
+                info,
+                aad,
+                secret.as_slice(),
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| Error::CryptoLibError(format!("HPKE Seal error: {:?}", e)))?;
+        Ok((ciphertext, KemOutput::new(kem_output)))
+    }
+}
+
+impl HpkeOpen for KeyStore {
+    fn open(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        cipher_text: &Ciphertext,
+        kem_out: &KemOutput,
+        info: &[u8],
+        aad: &[u8],
+    ) -> Result<Plaintext> {
+        let sk_r: PrivateKey = self.read(key_id)?;
+        let hpke = Hpke::new(
+            hpke::Mode::Base,
+            (kem as u16).try_into().unwrap(),
+            (kdf as u16).try_into().unwrap(),
+            (aead as u16).try_into().unwrap(),
+        );
+        let ptxt = hpke
+            .open(
+                kem_out.as_slice(),
+                &sk_r.as_slice().into(),
+                info,
+                aad,
+                cipher_text.cipher_text(),
+                None,
+                None,
+                None,
+            )
+            .map_err(|e| Error::CryptoLibError(format!("HPKE Open error: {:?}", e)))?;
+        Ok(Plaintext::new(ptxt))
+    }
+}
+
+impl HpkeDerive for KeyStore {
+    fn derive_key_pair(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        ikm_id: &impl KeyStoreId,
+        private_key_id: &impl KeyStoreId,
+        label: &[u8],
+    ) -> Result<PublicKey> {
+        let ikm: Secret = self.read(ikm_id)?;
+        let hpke = Hpke::new(
+            hpke::Mode::Base,
+            (kem as u16).try_into().unwrap(),
+            (kdf as u16).try_into().unwrap(),
+            (aead as u16).try_into().unwrap(),
+        );
+        let key_pair = hpke
+            .derive_key_pair(ikm.as_slice())
+            .map_err(|e| Error::CryptoLibError(format!("HPKE Derive key pair error: {:?}", e)))?;
+        let (private_key, public_key) = key_pair.into_keys();
+        let key_type = AsymmetricKeyType::try_from(kem)?;
+        let public_key = PublicKey::from(key_type, public_key.as_slice(), label);
+        let private_key = PrivateKey::from(key_type, private_key.as_slice(), label, &public_key);
+        self.store(private_key_id, &private_key)?;
+        Ok(public_key)
+    }
+}
+
+fn evercrypt_signature_type(key_type: AsymmetricKeyType) -> Result<signature::Mode> {
+    match key_type {
+        AsymmetricKeyType::Ed25519 => Ok(signature::Mode::Ed25519),
+        AsymmetricKeyType::P256 => Ok(signature::Mode::P256),
+        AsymmetricKeyType::X25519
+        | AsymmetricKeyType::Ed448
+        | AsymmetricKeyType::EcdsaP256Sha256
+        | AsymmetricKeyType::EcdsaP521Sha512 => {
+            return Err(Error::UnsupportedAlgorithm(format!("{:?}", key_type)))
+        }
+    }
+}
+
+impl Sign for KeyStore {
+    fn sign(
+        &self,
+        key_id: &impl KeyStoreId,
+        payload: &[u8],
+        hash: impl Into<Option<HashType>>,
+    ) -> Result<Signature> {
+        let sk: PrivateKey = self.read(key_id)?;
+        let hash = hash.into();
+        let evercrypt_hash = evercrypt_hash_type(hash);
+        let signature_mode = evercrypt_signature_type(sk.key_type())?;
+        let nonce = if signature_mode == signature::Mode::P256 {
+            Some(p256_ecdsa_random_nonce().map_err(|e| {
+                Error::CryptoLibError(format!("P256 nonce generation error: {:?}", e))
+            })?)
+        } else {
+            None
+        };
+        let signature = signature::sign(
+            signature_mode,
+            evercrypt_hash,
+            &sk.as_slice(),
+            payload,
+            nonce.as_ref(),
+        )
+        .map_err(|e| Error::CryptoLibError(format!("P256 nonce generation error: {:?}", e)))?;
+        Ok(Signature::new(signature, hash))
+    }
+}
+
+fn evercrypt_hash_type(
+    hash: impl Into<Option<HashType>>,
+) -> Option<evercrypt::prelude::DigestMode> {
+    if let Some(hash) = hash.into() {
+        Some(match hash {
+            HashType::Sha1 => evercrypt_digest::Mode::Sha1,
+            HashType::Sha2_256 => evercrypt_digest::Mode::Sha256,
+            HashType::Sha2_384 => evercrypt_digest::Mode::Sha384,
+            HashType::Sha2_512 => evercrypt_digest::Mode::Sha512,
+            HashType::Sha3_224 => evercrypt_digest::Mode::Sha3_224,
+            HashType::Sha3_256 => evercrypt_digest::Mode::Sha3_256,
+            HashType::Sha3_384 => evercrypt_digest::Mode::Sha3_384,
+            HashType::Sha3_512 => evercrypt_digest::Mode::Sha3_512,
+        })
+    } else {
+        None
+    }
+}
+
+impl Verify for KeyStore {
+    fn verify(
+        &self,
+        key_id: &impl KeyStoreId,
+        signature: &Signature,
+        payload: &[u8],
+    ) -> Result<()> {
+        let pk: PublicKey = self.read(key_id)?;
+        self.verify_with_pk(&pk, signature, payload)
+    }
+
+    fn verify_with_pk(&self, key: &PublicKey, signature: &Signature, payload: &[u8]) -> Result<()> {
+        let mode = evercrypt_signature_type(key.key_type())?;
+        let hash = evercrypt_hash_type(signature.hash_type());
+        let valid = signature::verify(mode, hash, key.as_slice(), signature.as_slice(), payload)
+            .map_err(|e| Error::InvalidSignature(format!("Error verifying signature: {:?}", e)))?;
+        if valid {
+            Ok(())
+        } else {
+            Err(Error::InvalidSignature(format!("Invalid signature")))
+        }
     }
 }
 

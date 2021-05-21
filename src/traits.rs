@@ -2,8 +2,8 @@ use crate::{
     keys::PublicKey,
     secret::Secret,
     types::{
-        AeadType, AsymmetricKeyType, Ciphertext, HashType, KemOutput, Plaintext, Signature,
-        SymmetricKeyType,
+        AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemOutput,
+        Plaintext, Signature, SymmetricKeyType,
     },
     KeyStoreIdentifier, Result,
 };
@@ -137,62 +137,98 @@ pub trait Open {
 }
 
 /// HPKE
-pub trait Hpke<HpkeImpl> {
+/// Note that his trait only holds a very limited subset of HPKE.
+/// Only single-shot, base-mode HPKE is supported for now.
+pub trait HpkeSeal {
     /// Encrypt the `payload` to the public key stored for `key_id`.
     fn seal(
-        hpke: HpkeImpl,
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
         key_id: &impl KeyStoreId,
         info: &[u8],
         aad: &[u8],
         payload: &[u8],
-    ) -> Result<(Ciphertext, KemOutput)>;
+    ) -> Result<(Vec<u8>, KemOutput)>;
 
     /// Encrypt the `payload` to the public `key`.
     fn seal_to_pk(
-        hpke: HpkeImpl,
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
         key: &PublicKey,
         info: &[u8],
         aad: &[u8],
         payload: &[u8],
-    ) -> Result<(Ciphertext, KemOutput)>;
+    ) -> Result<(Vec<u8>, KemOutput)>;
 
     /// Encrypt the secret stored for `secret_id` to the public key stored for `key_id`.
     fn seal_secret(
-        hpke: HpkeImpl,
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
         key_id: &impl KeyStoreId,
         info: &[u8],
         aad: &[u8],
         secret_id: &impl KeyStoreId,
-    ) -> Result<(Ciphertext, KemOutput)>;
+    ) -> Result<(Vec<u8>, KemOutput)>;
 
     /// Encrypt the secret stored for `secret_id` to the public `key`.
     fn seal_secret_to_pk(
-        hpke: HpkeImpl,
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
         key: &PublicKey,
         info: &[u8],
         aad: &[u8],
         secret_id: &impl KeyStoreId,
-    ) -> Result<(Ciphertext, KemOutput)>;
+    ) -> Result<(Vec<u8>, KemOutput)>;
+}
 
+pub trait HpkeOpen {
     /// Open an HPKE `cipher_text` with the private key of the given `key_id`.
     fn open(
-        hpke: HpkeImpl,
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
         key_id: &impl KeyStoreId,
         cipher_text: &Ciphertext,
         kem: &KemOutput,
         info: &[u8],
         aad: &[u8],
     ) -> Result<Plaintext>;
+}
 
+/// XXX: We really only need the KEM type here. But hpke-rs needs all of it
+pub trait HpkeDerive {
     /// Derive a new HPKE keypair from the secret at `ikm_id`.
-    fn derive_key_pair(hpke: HpkeImpl, ikm_id: &impl KeyStoreId) -> Result<()>;
+    fn derive_key_pair(
+        &self,
+        kem: HpkeKemType,
+        kdf: HpkeKdfType,
+        aead: AeadType,
+        ikm_id: &impl KeyStoreId,
+        private_key_id: &impl KeyStoreId,
+        label: &[u8],
+    ) -> Result<PublicKey>;
 }
 
 pub trait Sign {
-    fn sign(key_id: &impl KeyStoreId, payload: &[u8]) -> Result<Signature>;
+    fn sign(
+        &self,
+        key_id: &impl KeyStoreId,
+        payload: &[u8],
+        hash: impl Into<Option<HashType>>,
+    ) -> Result<Signature>;
 }
 
 pub trait Verify {
-    fn verify(key_id: &impl KeyStoreId, signature: &Signature, payload: &[u8]) -> Result<()>;
-    fn verify_with_pk(key: &PublicKey, signature: &Signature, payload: &[u8]) -> Result<()>;
+    fn verify(&self, key_id: &impl KeyStoreId, signature: &Signature, payload: &[u8])
+        -> Result<()>;
+    fn verify_with_pk(&self, key: &PublicKey, signature: &Signature, payload: &[u8]) -> Result<()>;
 }

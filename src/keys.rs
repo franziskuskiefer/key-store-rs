@@ -1,3 +1,10 @@
+//! # Public and Private Keys
+//!
+//! This module defines public and private key types that must be used to interact
+//! with the key store.
+//!
+//! FIXME: trait vs types. What do we really need.
+
 use std::convert::{TryFrom, TryInto};
 
 use crate::{
@@ -30,6 +37,13 @@ impl PublicKey {
             key_type,
             label: label.to_vec(),
         }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.value
+    }
+    pub(crate) fn key_type(&self) -> AsymmetricKeyType {
+        self.key_type
     }
 }
 
@@ -93,6 +107,12 @@ impl PrivateKey {
             label: label.to_vec(),
             public_key: public_key.into().cloned(),
         }
+    }
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.value
+    }
+    pub(crate) fn key_type(&self) -> AsymmetricKeyType {
+        self.key_type
     }
 }
 

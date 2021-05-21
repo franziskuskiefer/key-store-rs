@@ -16,7 +16,7 @@ rusqlite = { version = "0.25", optional = true }
 # The default crypto provider used for the builtin sqlite key store if enabled
 evercrypt = { version = "0.0.9", optional = true }
 # The default HPKE implementation used for the builtin sqlite key store if enabled
-hpke = { version = "0.0.8", package = "hpke-rs", optional = true }
+hpke = { version = "0.0.8", package = "hpke-rs", optional = true, features = ["hazmat"] }
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
