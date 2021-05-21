@@ -1,9 +1,15 @@
-use std::path::Path;
+use std::{convert::TryInto, path::Path};
 
 use crate::{
-    traits::{KeyStoreId, KeyStoreTrait, KeyStoreValue},
+    keys::{AsymmetricKeyError, PrivateKey, PublicKey},
+    secret::Secret,
+    traits::{
+        GenerateKeys, HkdfDerive, KeyStoreId, KeyStoreTrait, KeyStoreValue, Open, Seal, Supports,
+    },
+    types::{AeadType, AsymmetricKeyType, Ciphertext, HashType, Plaintext, SymmetricKeyType},
     Error, KeyStoreIdentifier, Result,
 };
+use evercrypt::{aead, ed25519, hkdf, hmac, p256, x25519};
 use rusqlite::{params, types::ToSqlOutput, Connection, OpenFlags, ToSql};
 
 pub struct KeyStore {
@@ -111,6 +117,200 @@ impl KeyStoreTrait for KeyStore {
                 Error::DeleteError
             })?;
         Ok(())
+    }
+}
+
+impl Supports for KeyStore {
+    fn symmetric_key_types(&self) -> Vec<SymmetricKeyType> {
+        vec![
+            SymmetricKeyType::Aes128,
+            SymmetricKeyType::Aes256,
+            SymmetricKeyType::ChaCha20,
+        ]
+    }
+
+    fn asymmetric_key_types(&self) -> Vec<AsymmetricKeyType> {
+        vec![
+            AsymmetricKeyType::X25519,
+            AsymmetricKeyType::Ed25519,
+            AsymmetricKeyType::P256,
+            AsymmetricKeyType::EcdsaP256Sha256,
+        ]
+    }
+}
+
+impl GenerateKeys for KeyStore {
+    fn new_secret(
+        &self,
+        key_type: SymmetricKeyType,
+        k: &impl KeyStoreId,
+        label: &[u8],
+    ) -> Result<()> {
+        if !self.symmetric_key_types().contains(&key_type) {
+            return Err(Error::UnsupportedSecretType(key_type));
+        }
+        let mut randomness = rand::thread_rng();
+        let secret = Secret::random_bor(&mut randomness, key_type, label);
+        self.store(k, &secret)
+    }
+
+    fn new_key_pair(
+        &self,
+        key_type: AsymmetricKeyType,
+        k: &impl KeyStoreId,
+        label: &[u8],
+    ) -> Result<PublicKey> {
+        let (public_key, private_key) = match key_type {
+            AsymmetricKeyType::X25519 => {
+                let private_key = x25519::key_gen();
+                let public_key = x25519::dh_base(&private_key);
+                let public_key = PublicKey::from(key_type, &public_key, label);
+                let private_key = PrivateKey::from(key_type, &private_key, label, &public_key);
+                (public_key, private_key)
+            }
+            AsymmetricKeyType::Ed25519 => {
+                let private_key = ed25519::key_gen();
+                let public_key = ed25519::sk2pk(&private_key);
+                let public_key = PublicKey::from(key_type, &public_key, label);
+                let private_key = PrivateKey::from(key_type, &private_key, label, &public_key);
+                (public_key, private_key)
+            }
+            AsymmetricKeyType::P256 | AsymmetricKeyType::EcdsaP256Sha256 => {
+                let private_key = p256::key_gen().map_err(|e| {
+                    Error::CryptoLibError(format!("P256 key generation error: {:?}", e))
+                })?;
+                let public_key = p256::dh_base(&private_key)
+                    .map_err(|e| AsymmetricKeyError::CryptoLibError(format!("{:?}", e)))?;
+                let public_key = PublicKey::from(key_type, &public_key, label);
+                let private_key = PrivateKey::from(key_type, &private_key, label, &public_key);
+                (public_key, private_key)
+            }
+            _ => return Err(Error::UnsupportedKeyType(key_type)),
+        };
+        self.store(k, &private_key)?;
+        Ok(public_key)
+    }
+}
+
+fn hmac_type(hash: HashType) -> Result<hmac::Mode> {
+    match hash {
+        HashType::Sha1 => Ok(hmac::Mode::Sha1),
+        HashType::Sha2_256 => Ok(hmac::Mode::Sha256),
+        HashType::Sha2_384 => Ok(hmac::Mode::Sha384),
+        HashType::Sha2_512 => Ok(hmac::Mode::Sha512),
+        _ => Err(Error::UnsupportedAlgorithm(format!("{:?}", hash))),
+    }
+}
+
+impl KeyStore {
+    fn extract_unsafe(&self, hash: HashType, ikm: &impl KeyStoreId, salt: &[u8]) -> Result<Secret> {
+        let mode = hmac_type(hash)?;
+        let ikm_secret: Secret = self.read(ikm)?;
+        let prk = hkdf::extract(mode, salt, ikm_secret.as_slice());
+        let prk_len = prk.len();
+        Secret::try_from(
+            prk,
+            SymmetricKeyType::Any(prk_len.try_into().map_err(|_| {
+                Error::InvalidLength(format!(
+                    "HKDF PRK is too long ({}) for a secret (u16)",
+                    prk_len
+                ))
+            })?),
+            b"HKDF-PRK",
+        )
+    }
+
+    fn expand_unsafe(
+        &self,
+        hash: HashType,
+        prk: Secret,
+        info: &[u8],
+        out_len: usize,
+    ) -> Result<Secret> {
+        let mode = hmac_type(hash)?;
+        let key = hkdf::expand(mode, prk.as_slice(), info, out_len);
+        if key.is_empty() {
+            return Err(Error::InvalidLength(format!(
+                "Invalid HKDF output length {}",
+                out_len
+            )));
+        }
+        let key_len = key.len();
+        Secret::try_from(
+            key,
+            SymmetricKeyType::Any(key_len.try_into().map_err(|_| {
+                Error::InvalidLength(format!(
+                    "HKDF key is too long ({}) for a secret (u16)",
+                    key_len
+                ))
+            })?),
+            b"HKDF-KEY",
+        )
+    }
+}
+
+impl HkdfDerive for KeyStore {
+    fn hkdf(
+        &self,
+        hash: HashType,
+        ikm: &impl KeyStoreId,
+        salt: &[u8],
+        info: &[u8],
+        out_len: usize,
+        okm: &impl KeyStoreId,
+    ) -> Result<()> {
+        let prk = self.extract_unsafe(hash, ikm, salt)?;
+        let key = self.expand_unsafe(hash, prk, info, out_len)?;
+        self.store(okm, &key)
+    }
+}
+
+fn aead_type(aead: AeadType) -> Result<aead::Mode> {
+    match aead {
+        AeadType::Aes128Gcm => Ok(aead::Mode::Aes128Gcm),
+        AeadType::Aes256Gcm => Ok(aead::Mode::Aes256Gcm),
+        AeadType::ChaCha20Poly1305 => Ok(aead::Mode::Chacha20Poly1305),
+    }
+}
+
+impl Seal for KeyStore {
+    fn seal(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &[u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Ciphertext> {
+        let key: Secret = self.read(key_id)?;
+        let mode = aead_type(aead)?;
+        let (ct, tag) = aead::encrypt(mode, key.as_slice(), msg, nonce, aad)
+            .map_err(|e| Error::EncryptionError(format!("Error encrypting: {:?}", e)))?;
+        Ok(Ciphertext::new(ct, tag))
+    }
+}
+
+impl Open for KeyStore {
+    fn open(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        cipher_text: &Ciphertext,
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Plaintext> {
+        let key: Secret = self.read(key_id)?;
+        let mode = aead_type(aead)?;
+        let pt = aead::decrypt(
+            mode,
+            key.as_slice(),
+            cipher_text.cipher_text(),
+            cipher_text.tag(),
+            nonce,
+            aad,
+        )
+        .map_err(|e| Error::DecryptionError(format!("Decryption encrypting: {:?}", e)))?;
+        Ok(Plaintext::new(pt))
     }
 }
 

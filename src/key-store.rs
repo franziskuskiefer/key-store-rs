@@ -1,6 +1,8 @@
 use std::result;
 
+use keys::AsymmetricKeyError;
 use secret::SymmetricKeyError;
+use types::{AsymmetricKeyType, SymmetricKeyType};
 
 pub mod keys;
 pub mod secret;
@@ -20,12 +22,26 @@ pub enum Error {
     ReadError,
     UpdateError,
     DeleteError,
+    UnsupportedKeyType(AsymmetricKeyType),
+    UnsupportedSecretType(SymmetricKeyType),
     SymmetricKeyError(SymmetricKeyError),
+    AsymmetricKeyError(AsymmetricKeyError),
+    UnsupportedAlgorithm(String),
+    InvalidLength(String),
+    EncryptionError(String),
+    DecryptionError(String),
+    CryptoLibError(String),
 }
 
 impl From<SymmetricKeyError> for Error {
     fn from(e: SymmetricKeyError) -> Self {
         Self::SymmetricKeyError(e)
+    }
+}
+
+impl From<AsymmetricKeyError> for Error {
+    fn from(e: AsymmetricKeyError) -> Self {
+        Self::AsymmetricKeyError(e)
     }
 }
 

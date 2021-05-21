@@ -8,12 +8,15 @@ edition = "2018"
 path = "src/key-store.rs"
 
 [dependencies]
-rusqlite = { version = "0.25", optional = true }
-evercrypt = { version = "0.0.8", optional = true }
-hpke = { version = "0.0.7", package = "hpke-rs", optional = true }
 log = "0.4"
 zeroize = { version = "1.3", features = ["zeroize_derive"] }
 rand = "0.8"
+# Used for the builtin sqlite key store if enabled
+rusqlite = { version = "0.25", optional = true }
+# The default crypto provider used for the builtin sqlite key store if enabled
+evercrypt = { version = "0.0.9", optional = true }
+# The default HPKE implementation used for the builtin sqlite key store if enabled
+hpke = { version = "0.0.8", package = "hpke-rs", optional = true }
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
@@ -24,5 +27,5 @@ sha2 = "0.9"
 default = []
 random = [] # Enable functions that require randomness such as key generation
 hazmat = [] # ☣️ enable unsafe features
-sqlite-backend = ["rusqlite"] # enable the builtin sqlite key store
+sqlite-backend = ["rusqlite", "evercrypt-backend"] # enable the builtin sqlite key store
 evercrypt-backend = ["evercrypt", "hpke"]

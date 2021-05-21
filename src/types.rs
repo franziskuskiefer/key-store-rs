@@ -2,10 +2,9 @@ use std::{convert::TryFrom, usize};
 
 use zeroize::Zeroize;
 
-use crate::secret::SymmetricKeyError;
+use crate::{keys::AsymmetricKeyError, secret::SymmetricKeyError};
 
 #[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
-#[repr(u16)]
 /// Asymmetric key types
 /// Note that it is not possible to use the same key for different operations.
 /// If a key should be used for two different operations, it must be stored for
@@ -28,6 +27,35 @@ pub enum AsymmetricKeyType {
 
     /// ECDSA NIST P521 key with SHA 512
     EcdsaP521Sha512,
+}
+
+impl TryFrom<u32> for AsymmetricKeyType {
+    type Error = AsymmetricKeyError;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(AsymmetricKeyType::X25519),
+            1 => Ok(AsymmetricKeyType::Ed25519),
+            2 => Ok(AsymmetricKeyType::Ed448),
+            3 => Ok(AsymmetricKeyType::P256),
+            4 => Ok(AsymmetricKeyType::EcdsaP256Sha256),
+            5 => Ok(AsymmetricKeyType::EcdsaP521Sha512),
+            _ => Err(AsymmetricKeyError::InvalidKeyType(value as usize)),
+        }
+    }
+}
+
+impl Into<u32> for AsymmetricKeyType {
+    fn into(self) -> u32 {
+        match self {
+            AsymmetricKeyType::X25519 => 0,
+            AsymmetricKeyType::Ed25519 => 1,
+            AsymmetricKeyType::Ed448 => 2,
+            AsymmetricKeyType::P256 => 3,
+            AsymmetricKeyType::EcdsaP256Sha256 => 4,
+            AsymmetricKeyType::EcdsaP521Sha512 => 5,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
@@ -97,12 +125,48 @@ pub enum AeadType {
     ChaCha20Poly1305,
 }
 
+#[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
+#[repr(u16)]
+/// Hash types
+pub enum HashType {
+    Sha1,
+    Sha2_256,
+    Sha2_384,
+    Sha2_512,
+    Sha3_224,
+    Sha3_256,
+    Sha3_384,
+    Sha3_512,
+}
+
 pub struct Ciphertext {
-    value: Vec<u8>,
+    ct: Vec<u8>,
+    tag: Vec<u8>,
+}
+
+impl Ciphertext {
+    pub(crate) fn new(ct: Vec<u8>, tag: Vec<u8>) -> Self {
+        Self { ct, tag }
+    }
+    pub fn cipher_text(&self) -> &[u8] {
+        &self.ct
+    }
+    pub fn tag(&self) -> &[u8] {
+        &self.tag
+    }
 }
 
 pub struct Plaintext {
-    value: Vec<u8>,
+    pt: Vec<u8>,
+}
+
+impl Plaintext {
+    pub(crate) fn new(pt: Vec<u8>) -> Self {
+        Self { pt }
+    }
+    pub fn as_slice(&self) -> &[u8] {
+        &self.pt
+    }
 }
 
 pub struct KemOutput {

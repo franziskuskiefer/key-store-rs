@@ -2,7 +2,8 @@ use crate::{
     keys::PublicKey,
     secret::Secret,
     types::{
-        AeadType, AsymmetricKeyType, Ciphertext, KemOutput, Plaintext, Signature, SymmetricKeyType,
+        AeadType, AsymmetricKeyType, Ciphertext, HashType, KemOutput, Plaintext, Signature,
+        SymmetricKeyType,
     },
     KeyStoreIdentifier, Result,
 };
@@ -42,14 +43,24 @@ pub trait KeyStoreId: Eq {
 
 /// Check whether the key store supports certain functionality.
 pub trait Supports {
-    fn secret_generation(&self) -> Vec<SymmetricKeyType>;
-    fn key_pair_generation(&self) -> Vec<AsymmetricKeyType>;
+    fn symmetric_key_types(&self) -> Vec<SymmetricKeyType>;
+    fn asymmetric_key_types(&self) -> Vec<AsymmetricKeyType>;
 }
 
 /// Generate keys.
 pub trait GenerateKeys {
-    fn new_secret(&self, k: &impl KeyStoreId, secret_len: usize) -> Result<()>;
-    fn new_key_pair<P>(&self, k: &impl KeyStoreId, key_type: AsymmetricKeyType) -> Result<P>;
+    fn new_secret(
+        &self,
+        key_type: SymmetricKeyType,
+        k: &impl KeyStoreId,
+        label: &[u8],
+    ) -> Result<()>;
+    fn new_key_pair(
+        &self,
+        key_type: AsymmetricKeyType,
+        k: &impl KeyStoreId,
+        label: &[u8],
+    ) -> Result<PublicKey>;
 }
 
 /// HKDF
@@ -58,14 +69,20 @@ pub trait HkdfDerive {
     /// Panics if not implemented.
     /// This can also be used to compute an HMAC.
     /// ☣️ **NOTE** that this returns secret key material.
-    fn extract(&self, _ikm: &impl KeyStoreId, _salt: &[u8]) -> Secret {
+    fn extract(&self, _hash: HashType, _ikm: &impl KeyStoreId, _salt: &[u8]) -> Result<Secret> {
         unimplemented!();
     }
 
     /// HKDF expand
     /// Panics if not implemented.
     /// ☣️ **NOTE** that this returns secret key material.
-    fn expand(&self, _prk: &impl KeyStoreId, _info: &[u8], _out_len: usize) -> Secret {
+    fn expand(
+        &self,
+        _hash: HashType,
+        _prk: &impl KeyStoreId,
+        _info: &[u8],
+        _out_len: usize,
+    ) -> Result<Secret> {
         unimplemented!();
     }
 
@@ -74,40 +91,46 @@ pub trait HkdfDerive {
     /// This is the only function that must be implemented.
     fn hkdf(
         &self,
+        hash: HashType,
         ikm: &impl KeyStoreId,
         salt: &[u8],
         info: &[u8],
         out_len: usize,
         okm: &impl KeyStoreId,
-    );
+    ) -> Result<()>;
 
     /// HKDF
     /// Panics if not implemented.
     /// ☣️ **NOTE** that this returns secret key material.
     fn hkdf_export(
         &self,
+        _hash: HashType,
         _ikm: &impl KeyStoreId,
         _salt: &[u8],
         _info: &[u8],
         _out_len: usize,
-    ) -> Secret {
+    ) -> Result<Secret> {
         unimplemented!();
     }
 }
 
 /// AEAD
-pub trait Aead {
+pub trait Seal {
     fn seal(
+        &self,
         aead: AeadType,
         key_id: &impl KeyStoreId,
         msg: &[u8],
         aad: &[u8],
         nonce: &[u8],
     ) -> Result<Ciphertext>;
+}
+pub trait Open {
     fn open(
+        &self,
         aead: AeadType,
         key_id: &impl KeyStoreId,
-        cipher_text: &[u8],
+        cipher_text: &Ciphertext,
         aad: &[u8],
         nonce: &[u8],
     ) -> Result<Plaintext>;

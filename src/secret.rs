@@ -10,7 +10,7 @@ use zeroize::Zeroize;
 use crate::{
     traits::{private::PrivateKeyStoreValue, KeyStoreValue},
     types::SymmetricKeyType,
-    util::{bytes_to_hex, equal_ct},
+    util::{bytes_to_hex, equal_ct, U16_LEN, U32_LEN},
     Error, Result,
 };
 
@@ -82,8 +82,8 @@ impl Debug for Secret {
 
 impl Secret {
     #[cfg(features = "random")]
-    pub(crate) fn random(len: usize, key_type: SymmetricKeyType, label: &[u8]) -> Self {
-        let mut value = vec![0u8; len];
+    pub(crate) fn random(key_type: SymmetricKeyType, label: &[u8]) -> Self {
+        let mut value = vec![0u8; key_type.len()];
         OsRng.fill_bytes(&mut value);
         Self {
             value,
@@ -94,17 +94,21 @@ impl Secret {
 
     pub(crate) fn random_bor<T: CryptoRng + RngCore>(
         randomness: &mut T,
-        len: usize,
         key_type: SymmetricKeyType,
         label: &[u8],
     ) -> Self {
-        let mut value = vec![0u8; len];
+        let mut value = vec![0u8; key_type.len()];
         randomness.fill_bytes(&mut value);
         Self {
             value,
             key_type,
             label: label.to_vec(),
         }
+    }
+
+    /// Get an all-zero secret
+    pub(crate) fn zero(key_type: SymmetricKeyType, label: &[u8]) -> Result<Self> {
+        Self::try_from(vec![0u8; key_type.len()], key_type, label)
     }
 
     pub(crate) fn try_from_slice(
@@ -128,10 +132,11 @@ impl Secret {
             label: label.to_vec(),
         })
     }
-}
 
-const U16_LEN: usize = std::mem::size_of::<u16>();
-const U32_LEN: usize = std::mem::size_of::<u32>();
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.value
+    }
+}
 
 impl KeyStoreValue for Secret {}
 

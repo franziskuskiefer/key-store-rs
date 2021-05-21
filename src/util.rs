@@ -14,3 +14,6 @@ pub(crate) fn equal_ct(a: &[u8], b: &[u8]) -> bool {
     }
     diff == 0
 }
+
+pub(crate) const U16_LEN: usize = std::mem::size_of::<u16>();
+pub(crate) const U32_LEN: usize = std::mem::size_of::<u32>();
