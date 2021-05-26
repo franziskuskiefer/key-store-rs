@@ -3,17 +3,25 @@ use crate::{
     secret::Secret,
     types::{
         AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemOutput,
-        Plaintext, Signature, SymmetricKeyType,
+        Plaintext, PrivateKeyId, Signature, SymmetricKeyType,
     },
     KeyStoreIdentifier, Result,
 };
 
 /// The main Key Store trait
-pub trait KeyStoreTrait {
-    fn store(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()>;
-    fn read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V>;
-    fn update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()>;
-    fn delete(&self, k: &impl KeyStoreId) -> Result<()>;
+pub trait KeyStoreTrait: Send + Sync {
+    fn store(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()>
+    where
+        Self: Sized;
+    fn read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V>
+    where
+        Self: Sized;
+    fn update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()>
+    where
+        Self: Sized;
+    fn delete(&self, k: &impl KeyStoreId) -> Result<()>
+    where
+        Self: Sized;
 }
 
 /// This private module is used to hide functionality of public traits.
@@ -36,15 +44,21 @@ pub trait KeyStoreValue: private::PrivateKeyStoreValue {}
 /// Any value that is used as key to index values in the key store mut implement
 /// this trait.
 pub trait KeyStoreId: Eq {
-    fn id(&self) -> KeyStoreIdentifier;
+    fn id(&self) -> Result<KeyStoreIdentifier>
+    where
+        Self: Sized;
 }
 
 // === Crypto traits === //
 
 /// Check whether the key store supports certain functionality.
 pub trait Supports {
-    fn symmetric_key_types(&self) -> Vec<SymmetricKeyType>;
-    fn asymmetric_key_types(&self) -> Vec<AsymmetricKeyType>;
+    fn symmetric_key_types(&self) -> Vec<SymmetricKeyType>
+    where
+        Self: Sized;
+    fn asymmetric_key_types(&self) -> Vec<AsymmetricKeyType>
+    where
+        Self: Sized;
 }
 
 /// Generate keys.
@@ -58,9 +72,19 @@ pub trait GenerateKeys {
     fn new_key_pair(
         &self,
         key_type: AsymmetricKeyType,
-        k: &impl KeyStoreId,
+        k: Option<&impl KeyStoreId>,
         label: &[u8],
-    ) -> Result<PublicKey>;
+    ) -> Result<(PublicKey, Option<PrivateKeyId>)>;
+}
+
+/// Hashing
+pub trait Hash {
+    fn hash(&self, hash: HashType, data: &[u8]) -> Result<Vec<u8>>;
+    fn hasher<T>(&self, hash: HashType) -> Result<T>
+    where
+        Self: Sized;
+    fn update_hash<T>(&self, hasher: &T, data: &[u8]) -> Result<()>;
+    fn finish_hash<T>(&self, hasher: T) -> Result<Vec<u8>>;
 }
 
 /// HKDF

@@ -1,4 +1,4 @@
-use std::result;
+use std::{result, sync::PoisonError};
 
 use keys::AsymmetricKeyError;
 use secret::SymmetricKeyError;
@@ -8,6 +8,7 @@ pub mod keys;
 pub mod secret;
 pub mod traits;
 pub mod types;
+pub mod crypto_registry;
 
 #[cfg(feature = "sqlite-backend")]
 pub mod sqlite_key_store;
@@ -32,6 +33,7 @@ pub enum Error {
     DecryptionError(String),
     CryptoLibError(String),
     InvalidSignature(String),
+    MutexError(String),
 }
 
 impl From<SymmetricKeyError> for Error {
@@ -43,6 +45,12 @@ impl From<SymmetricKeyError> for Error {
 impl From<AsymmetricKeyError> for Error {
     fn from(e: AsymmetricKeyError) -> Self {
         Self::AsymmetricKeyError(e)
+    }
+}
+
+impl<Guard> From<PoisonError<Guard>> for Error {
+    fn from(e: PoisonError<Guard>) -> Self {
+        Self::MutexError(format!("Sync poison error {}", e))
     }
 }
 

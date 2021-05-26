@@ -1,10 +1,11 @@
 use std::{
     convert::{TryFrom, TryInto},
     path::Path,
+    sync::Mutex,
 };
 
 use crate::{
-    keys::{AsymmetricKeyError, PrivateKey, PublicKey},
+    keys::{AsymmetricKeyError, PublicKey},
     secret::Secret,
     traits::{
         GenerateKeys, HkdfDerive, HpkeDerive, HpkeOpen, HpkeSeal, KeyStoreId, KeyStoreTrait,
@@ -12,7 +13,7 @@ use crate::{
     },
     types::{
         AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemOutput,
-        Plaintext, Signature, SymmetricKeyType,
+        Plaintext, PrivateKeyId, Signature, SymmetricKeyType,
     },
     Error, KeyStoreIdentifier, Result,
 };
@@ -23,8 +24,11 @@ use evercrypt::{
 use hpke::{self, Hpke};
 use rusqlite::{params, types::ToSqlOutput, Connection, OpenFlags, ToSql};
 
+mod types;
+use types::PrivateKey;
+
 pub struct KeyStore {
-    sql: Connection,
+    sql: Mutex<Connection>,
 }
 
 fn init_key_store(connection: &Connection) -> Result<()> {
@@ -49,7 +53,9 @@ impl Default for KeyStore {
     fn default() -> Self {
         let connection = Connection::open_in_memory().unwrap();
         init_key_store(&connection).unwrap();
-        Self { sql: connection }
+        Self {
+            sql: Mutex::new(connection),
+        }
     }
 }
 
@@ -57,13 +63,17 @@ impl KeyStore {
     pub fn new(path: &Path) -> Self {
         let connection = Connection::open(path).unwrap();
         init_key_store(&connection).unwrap();
-        Self { sql: connection }
+        Self {
+            sql: Mutex::new(connection),
+        }
     }
 
     pub fn open(path: &Path) -> Self {
         let connection =
             Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE).unwrap();
-        Self { sql: connection }
+        Self {
+            sql: Mutex::new(connection),
+        }
     }
 }
 
@@ -75,10 +85,11 @@ impl ToSql for KeyStoreIdentifier {
 
 impl KeyStoreTrait for KeyStore {
     fn store(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
-        self.sql
+        let connection = self.sql.lock()?;
+        connection
             .execute(
                 "INSERT INTO secrets (label, value) VALUES (?1, ?2)",
-                params![k.id(), v.serialize()],
+                params![k.id()?, v.serialize()],
             )
             .map_err(|e| {
                 log::error!("SQL ERROR: {:?}", e);
@@ -88,11 +99,11 @@ impl KeyStoreTrait for KeyStore {
     }
 
     fn read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V> {
-        let result: Vec<u8> = self
-            .sql
+        let connection = self.sql.lock()?;
+        let result: Vec<u8> = connection
             .query_row(
                 "SELECT value FROM secrets WHERE label = ?1",
-                params![k.id()],
+                params![k.id()?],
                 |row| Ok(row.get(0)?),
             )
             .map_err(|e| {
@@ -103,11 +114,11 @@ impl KeyStoreTrait for KeyStore {
     }
 
     fn update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
-        let updated_rows = self
-            .sql
+        let connection = self.sql.lock()?;
+        let updated_rows = connection
             .execute(
                 "UPDATE secrets SET value = ?1 WHERE label = ?2",
-                params![v.serialize(), k.id()],
+                params![v.serialize(), k.id()?],
             )
             .map_err(|e| {
                 log::error!("SQL ERROR: {:?}", e);
@@ -121,8 +132,9 @@ impl KeyStoreTrait for KeyStore {
     }
 
     fn delete(&self, k: &impl KeyStoreId) -> Result<()> {
-        self.sql
-            .execute("DELETE FROM secrets WHERE label = ?1", params![k.id()])
+        let connection = self.sql.lock()?;
+        connection
+            .execute("DELETE FROM secrets WHERE label = ?1", params![k.id()?])
             .map_err(|e| {
                 log::error!("SQL ERROR: {:?}", e);
                 Error::DeleteError
@@ -168,9 +180,9 @@ impl GenerateKeys for KeyStore {
     fn new_key_pair(
         &self,
         key_type: AsymmetricKeyType,
-        k: &impl KeyStoreId,
+        k: Option<&impl KeyStoreId>,
         label: &[u8],
-    ) -> Result<PublicKey> {
+    ) -> Result<(PublicKey, Option<PrivateKeyId>)> {
         let (public_key, private_key) = match key_type {
             AsymmetricKeyType::X25519 => {
                 let private_key = x25519::key_gen();
@@ -198,8 +210,15 @@ impl GenerateKeys for KeyStore {
             }
             _ => return Err(Error::UnsupportedKeyType(key_type)),
         };
-        self.store(k, &private_key)?;
-        Ok(public_key)
+        let id = if let Some(id) = k {
+            self.store(id, &private_key)?;
+            None
+        } else {
+            let id = PrivateKeyId::new(label, public_key.as_slice());
+            self.store(&id, &private_key)?;
+            Some(id)
+        };
+        Ok((public_key, id))
     }
 }
 
@@ -578,8 +597,10 @@ mod tests {
     }
 
     impl KeyStoreId for KeyId {
-        fn id(&self) -> KeyStoreIdentifier {
-            KeyStoreIdentifier(Sha256::digest(&self.id).try_into().unwrap())
+        fn id(&self) -> Result<KeyStoreIdentifier> {
+            Ok(KeyStoreIdentifier(
+                Sha256::digest(&self.id).try_into().unwrap(),
+            ))
         }
     }
 

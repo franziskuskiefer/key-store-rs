@@ -17,11 +17,21 @@ rusqlite = { version = "0.25", optional = true }
 evercrypt = { version = "0.0.9", optional = true }
 # The default HPKE implementation used for the builtin sqlite key store if enabled
 hpke = { version = "0.0.8", package = "hpke-rs", optional = true, features = ["hazmat"] }
+# Serialization
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+# registry
+lazy_static = "1.4"
+tls_codec = { version = "0.1", git = "https://github.com/openmls/tls-codec.git", branch = "main", features = ["derive"] }
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
 digest = "0.9"
 sha2 = "0.9"
+evercrypt = { version = "0.0.9" }
+
+[patch.'https://github.com/openmls/tls-codec.git']
+tls_codec = { path = "../tls-codec/tls_codec" }
 
 [features]
 default = []
@@ -29,3 +39,4 @@ random = [] # Enable functions that require randomness such as key generation
 hazmat = [] # ☣️ enable unsafe features
 sqlite-backend = ["rusqlite", "evercrypt-backend"] # enable the builtin sqlite key store
 evercrypt-backend = ["evercrypt", "hpke"]
+serialization = ["serde", "serde_json", "evercrypt/serialization", "hpke/serialization"]
