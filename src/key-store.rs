@@ -16,7 +16,7 @@ mod util;
 
 pub const KEY_STORE_ID_LEN: usize = 32;
 #[derive(PartialEq, Eq, Debug)]
-pub struct KeyStoreIdentifier([u8; KEY_STORE_ID_LEN]);
+pub struct KeyStoreIdentifier(pub [u8; KEY_STORE_ID_LEN]);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {

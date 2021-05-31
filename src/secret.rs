@@ -117,7 +117,8 @@ impl Secret {
         Self::try_from(b.into(), key_type, label)
     }
 
-    pub(crate) fn try_from(b: Vec<u8>, key_type: SymmetricKeyType, label: &[u8]) -> Result<Self> {
+    // XXX: do we really want this?
+    pub fn try_from(b: Vec<u8>, key_type: SymmetricKeyType, label: &[u8]) -> Result<Self> {
         if b.len() != key_type.len() {
             return Err(Error::SymmetricKeyError(SymmetricKeyError::InvalidLength(
                 b.len(),

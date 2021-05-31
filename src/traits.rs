@@ -169,7 +169,6 @@ pub trait HpkeSeal {
     /// Encrypt the `payload` to the public key stored for `key_id`.
     fn seal(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key_id: &impl KeyStoreId,
@@ -181,7 +180,6 @@ pub trait HpkeSeal {
     /// Encrypt the `payload` to the public `key`.
     fn seal_to_pk(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key: &PublicKey,
@@ -193,7 +191,6 @@ pub trait HpkeSeal {
     /// Encrypt the secret stored for `secret_id` to the public key stored for `key_id`.
     fn seal_secret(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key_id: &impl KeyStoreId,
@@ -205,7 +202,6 @@ pub trait HpkeSeal {
     /// Encrypt the secret stored for `secret_id` to the public `key`.
     fn seal_secret_to_pk(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key: &PublicKey,
@@ -217,13 +213,12 @@ pub trait HpkeSeal {
 
 pub trait HpkeOpen {
     /// Open an HPKE `cipher_text` with the private key of the given `key_id`.
-    fn open(
+    fn open_with_sk(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key_id: &impl KeyStoreId,
-        cipher_text: &Ciphertext,
+        cipher_text: &[u8],
         kem: &KemOutput,
         info: &[u8],
         aad: &[u8],

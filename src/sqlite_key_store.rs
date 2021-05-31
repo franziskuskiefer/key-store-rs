@@ -22,7 +22,7 @@ use evercrypt::{
     prelude::{p256_ecdsa_random_nonce, DigestMode},
     signature, x25519,
 };
-use hpke::{self, Hpke};
+use hpke::{self, prelude::*, Hpke};
 use rusqlite::{
     params,
     types::{FromSql, FromSqlError, ToSqlOutput},
@@ -30,7 +30,7 @@ use rusqlite::{
 };
 
 mod types;
-use types::PrivateKey;
+pub use types::PrivateKey;
 
 pub struct KeyStore {
     sql: Mutex<Connection>,
@@ -113,7 +113,7 @@ impl KeyStore {
         Ok(())
     }
 
-    fn _read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V> {
+    fn internal_read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<(V, Status)> {
         let connection = self.sql.lock()?;
         let mut result: (Vec<u8>, Status) = connection
             .query_row(
@@ -125,8 +125,13 @@ impl KeyStore {
                 log::error!("SQL ERROR: {:?}", e);
                 Error::ReadError
             })?;
-        match result.1 {
-            Status::Extractable | Status::UnconfirmedExtractable => V::deserialize(&mut result.0),
+        Ok((V::deserialize(&mut result.0)?, result.1))
+    }
+
+    fn _read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V> {
+        let (v, status) = self.internal_read(k)?;
+        match status {
+            Status::Extractable | Status::UnconfirmedExtractable => Ok(v),
             Status::Hidden | Status::UnconfirmedHidden => Err(Error::ForbiddenExtraction),
         }
     }
@@ -313,7 +318,7 @@ fn hmac_type(hash: HashType) -> Result<hmac::Mode> {
 impl KeyStore {
     fn extract_unsafe(&self, hash: HashType, ikm: &impl KeyStoreId, salt: &[u8]) -> Result<Secret> {
         let mode = hmac_type(hash)?;
-        let ikm_secret: Secret = self.read(ikm)?;
+        let (ikm_secret, _status): (Secret, Status) = self.internal_read(ikm)?;
         let prk = hkdf::extract(mode, salt, ikm_secret.as_slice());
         let prk_len = prk.len();
         Secret::try_from(
@@ -391,7 +396,7 @@ impl Seal for KeyStore {
         aad: &[u8],
         nonce: &[u8],
     ) -> Result<Ciphertext> {
-        let key: Secret = self.read(key_id)?;
+        let (key, _status): (Secret, Status) = self.internal_read(key_id)?;
         let mode = aead_type(aead)?;
         let (ct, tag) = aead::encrypt(mode, key.as_slice(), msg, nonce, aad)
             .map_err(|e| Error::EncryptionError(format!("Error encrypting: {:?}", e)))?;
@@ -408,7 +413,7 @@ impl Open for KeyStore {
         aad: &[u8],
         nonce: &[u8],
     ) -> Result<Plaintext> {
-        let key: Secret = self.read(key_id)?;
+        let (key, _status): (Secret, Status) = self.internal_read(key_id)?;
         let mode = aead_type(aead)?;
         let pt = aead::decrypt(
             mode,
@@ -423,10 +428,20 @@ impl Open for KeyStore {
     }
 }
 
+fn evercrypt_kem_type(key_type: AsymmetricKeyType) -> Result<HpkeKemMode> {
+    match key_type {
+        AsymmetricKeyType::KemKey(KemKeyType::P256) => Ok(HpkeKemMode::DhKemP256),
+        AsymmetricKeyType::KemKey(KemKeyType::P384) => Ok(HpkeKemMode::DhKemP384),
+        AsymmetricKeyType::KemKey(KemKeyType::P521) => Ok(HpkeKemMode::DhKemP521),
+        AsymmetricKeyType::KemKey(KemKeyType::X25519) => Ok(HpkeKemMode::DhKem25519),
+        AsymmetricKeyType::KemKey(KemKeyType::X448) => Ok(HpkeKemMode::DhKem448),
+        _ => return Err(Error::UnsupportedAlgorithm(format!("{:?}", key_type))),
+    }
+}
+
 impl HpkeSeal for KeyStore {
     fn seal(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key_id: &impl KeyStoreId,
@@ -434,13 +449,12 @@ impl HpkeSeal for KeyStore {
         aad: &[u8],
         payload: &[u8],
     ) -> Result<(Vec<u8>, KemOutput)> {
-        let pk_r: PublicKey = self.read(key_id)?;
-        self.seal_to_pk(kem, kdf, aead, &pk_r, info, aad, payload)
+        let (pk_r, _status): (PublicKey, Status) = self.internal_read(key_id)?;
+        self.seal_to_pk(kdf, aead, &pk_r, info, aad, payload)
     }
 
     fn seal_to_pk(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key: &PublicKey,
@@ -448,6 +462,7 @@ impl HpkeSeal for KeyStore {
         aad: &[u8],
         payload: &[u8],
     ) -> Result<(Vec<u8>, KemOutput)> {
+        let kem = evercrypt_kem_type(key.key_type())?;
         let hpke = Hpke::new(
             hpke::Mode::Base,
             (kem as u16).try_into().unwrap(),
@@ -462,7 +477,6 @@ impl HpkeSeal for KeyStore {
 
     fn seal_secret(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key_id: &impl KeyStoreId,
@@ -470,13 +484,12 @@ impl HpkeSeal for KeyStore {
         aad: &[u8],
         secret_id: &impl KeyStoreId,
     ) -> Result<(Vec<u8>, KemOutput)> {
-        let pk_r: PublicKey = self.read(key_id)?;
-        self.seal_secret_to_pk(kem, kdf, aead, &pk_r, info, aad, secret_id)
+        let (pk_r, _status): (PublicKey, Status) = self.internal_read(key_id)?;
+        self.seal_secret_to_pk(kdf, aead, &pk_r, info, aad, secret_id)
     }
 
     fn seal_secret_to_pk(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key: &PublicKey,
@@ -484,7 +497,8 @@ impl HpkeSeal for KeyStore {
         aad: &[u8],
         secret_id: &impl KeyStoreId,
     ) -> Result<(Vec<u8>, KemOutput)> {
-        let secret: Secret = self.read(secret_id)?;
+        let kem = evercrypt_kem_type(key.key_type())?;
+        let (secret, _status): (Secret, Status) = self.internal_read(secret_id)?;
         let hpke = Hpke::new(
             hpke::Mode::Base,
             (kem as u16).try_into().unwrap(),
@@ -507,18 +521,18 @@ impl HpkeSeal for KeyStore {
 }
 
 impl HpkeOpen for KeyStore {
-    fn open(
+    fn open_with_sk(
         &self,
-        kem: HpkeKemType,
         kdf: HpkeKdfType,
         aead: AeadType,
         key_id: &impl KeyStoreId,
-        cipher_text: &Ciphertext,
+        cipher_text: &[u8],
         kem_out: &KemOutput,
         info: &[u8],
         aad: &[u8],
     ) -> Result<Plaintext> {
-        let sk_r: PrivateKey = self.read(key_id)?;
+        let (sk_r, _status): (PrivateKey, Status) = self.internal_read(key_id)?;
+        let kem = evercrypt_kem_type(sk_r.key_type())?;
         let hpke = Hpke::new(
             hpke::Mode::Base,
             (kem as u16).try_into().unwrap(),
@@ -531,7 +545,7 @@ impl HpkeOpen for KeyStore {
                 &sk_r.as_slice().into(),
                 info,
                 aad,
-                cipher_text.cipher_text(),
+                cipher_text,
                 None,
                 None,
                 None,
@@ -551,7 +565,7 @@ impl HpkeDerive for KeyStore {
         private_key_id: &impl KeyStoreId,
         label: &[u8],
     ) -> Result<PublicKey> {
-        let ikm: Secret = self.read(ikm_id)?;
+        let (ikm, _status): (Secret, Status) = self.internal_read(ikm_id)?;
         let hpke = Hpke::new(
             hpke::Mode::Base,
             (kem as u16).try_into().unwrap(),
@@ -588,7 +602,7 @@ impl Sign for KeyStore {
         payload: &[u8],
         hash: impl Into<Option<HashType>>,
     ) -> Result<Signature> {
-        let sk: PrivateKey = self.read(key_id)?;
+        let (sk, _status): (PrivateKey, Status) = self.internal_read(key_id)?;
         let hash = hash.into();
         let evercrypt_hash = evercrypt_hash_type(hash);
         let signature_mode = evercrypt_signature_type(sk.key_type())?;
@@ -638,7 +652,7 @@ impl Verify for KeyStore {
         signature: &Signature,
         payload: &[u8],
     ) -> Result<()> {
-        let pk: PublicKey = self.read(key_id)?;
+        let (pk, _status): (PublicKey, Status) = self.internal_read(key_id)?;
         self.verify_with_pk(&pk, signature, payload)
     }
 
@@ -652,82 +666,5 @@ impl Verify for KeyStore {
         } else {
             Err(Error::InvalidSignature(format!("Invalid signature")))
         }
-    }
-}
-
-// === Unit Tests === //
-
-#[cfg(test)]
-mod tests {
-    use std::convert::TryInto;
-
-    use digest::Digest;
-    use sha2::Sha256;
-
-    use crate::{secret::Secret, traits::KeyStoreTrait, types, KeyStoreIdentifier};
-
-    use super::*;
-
-    #[derive(Debug, PartialEq, Eq)]
-    struct KeyId {
-        id: Vec<u8>,
-    }
-
-    impl KeyStoreId for KeyId {
-        fn id(&self) -> Result<KeyStoreIdentifier> {
-            Ok(KeyStoreIdentifier(
-                Sha256::digest(&self.id).try_into().unwrap(),
-            ))
-        }
-    }
-
-    #[test]
-    fn basic() {
-        let _ = pretty_env_logger::try_init();
-        // let ks = KeyStore::new(Path::new("test-db.sqlite"));
-        // let ks = KeyStore::open(Path::new("test-db.sqlite"));
-        let ks = KeyStore::default();
-        let secret = Secret::try_from(vec![3u8; 32], types::SymmetricKeyType::Aes256, &[]).unwrap();
-        let id = KeyId {
-            id: b"Key Id 1".to_vec(),
-        };
-
-        ks.store(&id, &secret).unwrap();
-        let secret_again = ks.read(&id).unwrap();
-        assert_eq!(secret, secret_again);
-
-        let secret2 =
-            Secret::try_from(vec![4u8; 32], types::SymmetricKeyType::Aes256, &[]).unwrap();
-        let id2 = KeyId {
-            id: b"Key Id 2".to_vec(),
-        };
-
-        ks.store(&id2, &secret2).unwrap();
-        let secret_again = ks.read(&id2).unwrap();
-        assert_eq!(secret2, secret_again);
-        let secret_again = ks.read(&id).unwrap();
-        assert_eq!(secret, secret_again);
-
-        ks.delete(&id2).unwrap();
-        let secret_again: Result<Secret> = ks.read(&id2);
-        assert_eq!(Error::ReadError, secret_again.err().unwrap());
-
-        let secret_again = ks.read(&id).unwrap();
-        assert_eq!(secret, secret_again);
-
-        ks.update(&id, &secret2).unwrap();
-        let secret_again = ks.read(&id).unwrap();
-        assert_eq!(secret2, secret_again);
-
-        let (pk, sk_id) = ks
-            .new_key_pair(
-                AsymmetricKeyType::KemKey(KemKeyType::X25519),
-                Status::Hidden,
-                b"hidden x25519 key pair",
-            )
-            .expect("Error generating x25519 key pair");
-        let err: Result<PrivateKey> = ks.read(&sk_id);
-        assert_eq!(err.err(), Some(Error::ForbiddenExtraction));
-        // ks.seal_to_pk(kem, kdf, aead, key, info, aad, payload)
     }
 }
