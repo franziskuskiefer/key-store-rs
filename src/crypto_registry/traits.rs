@@ -1,18 +1,27 @@
-use std::fmt::Debug;
+use std::{any::Any, fmt::Debug};
 
 /// The basic trait implemented by all primitives.
 pub trait Algorithm {
-    fn get_name() -> String
+    fn name() -> String
     where
         Self: Sized;
+    fn as_any(&self) -> Box<dyn Any>;
+}
+
+pub trait CryptoRegistry {
+    fn add<T: Provider + 'static>(&self, provider: T);
+    fn supports(&self, algorithm: &'static str) -> bool;
+    fn aead(&self, algorithm: &'static str) -> Option<Box<dyn Aead>>;
+    fn digest(&self, algorithm: &'static str) -> Option<Box<dyn Digest>>;
 }
 
 /// A crypto library that wants to register with the `Registry` has to implement
 /// this `Provider` trait.
 pub trait Provider: Send + Sync + Debug {
     fn supports(&self, algorithm: &'static str) -> bool;
-    fn aead(&self, algorithm: &'static str) -> Option<&Box<dyn Aead>>;
-    fn digest(&self, algorithm: &'static str) -> Option<&Box<dyn Digest>>;
+    fn name(&self) -> &str;
+    fn aead(&self, algorithm: &'static str) -> Option<Box<dyn Aead>>;
+    fn digest(&self, algorithm: &'static str) -> Option<Box<dyn Digest>>;
 }
 
 pub type Ciphertext = Vec<u8>;
@@ -33,7 +42,7 @@ pub trait Aead: Algorithm + Send + Sync + Debug {
     fn new() -> Self
     where
         Self: Sized;
-    fn get_instance(&self) -> Box<dyn Aead>;
+    fn get_instance(&self) -> Box<dyn Aead + 'static>;
 
     // Nonce and key generation helper.
     fn key_gen(&self) -> Vec<u8>;
@@ -63,7 +72,7 @@ pub trait Digest: Algorithm + Send + Sync + Debug {
     fn new() -> Self
     where
         Self: Sized;
-    fn get_instance(&self) -> Box<dyn Digest>;
+    fn get_instance(&self) -> Box<dyn Digest + 'static>;
 
     // Single-shot hash function.
     fn hash(&self, message: &[u8]) -> Vec<u8>;

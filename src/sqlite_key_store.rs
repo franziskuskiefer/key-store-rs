@@ -1,28 +1,37 @@
 use std::{
     convert::{TryFrom, TryInto},
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use crate::{
+    crypto_registry::{
+        algorithms::SHA2_256,
+        traits::{CryptoRegistry, Provider},
+    },
     keys::{AsymmetricKeyError, PublicKey},
     secret::Secret,
     traits::{
-        GenerateKeys, HkdfDerive, HpkeDerive, HpkeOpen, HpkeSeal, KeyStoreId, KeyStoreTrait,
-        KeyStoreValue, Open, Seal, Sign, Supports, Verify,
+        GenerateKeys, Hash, Hasher, HkdfDerive, HpkeDerive, HpkeOpen, HpkeSeal, KeyStoreId,
+        KeyStoreTrait, KeyStoreValue, Open, Seal, Sign, Supports, Verify,
     },
     types::{
-        AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemOutput,
-        Plaintext, PrivateKeyId, Signature, SymmetricKeyType,
+        AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemKeyType,
+        KemOutput, Plaintext, PrivateKeyId, Signature, SignatureKeyType, Status, SymmetricKeyType,
     },
     Error, KeyStoreIdentifier, Result,
 };
 use evercrypt::{
-    aead, digest as evercrypt_digest, ed25519, hkdf, hmac, p256, prelude::p256_ecdsa_random_nonce,
+    aead, digest as evercrypt_digest, ed25519, hkdf, hmac, p256,
+    prelude::{p256_ecdsa_random_nonce, DigestMode},
     signature, x25519,
 };
 use hpke::{self, Hpke};
-use rusqlite::{params, types::ToSqlOutput, Connection, OpenFlags, ToSql};
+use rusqlite::{
+    params,
+    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput},
+    Connection, OpenFlags, ToSql,
+};
 
 mod types;
 use types::PrivateKey;
@@ -38,6 +47,7 @@ fn init_key_store(connection: &Connection) -> Result<()> {
               id              INTEGER PRIMARY KEY,
               label           BLOB,
               value           BLOB,
+              status          INTEGER,
               UNIQUE(label)
               )",
             [],
@@ -59,6 +69,7 @@ impl Default for KeyStore {
     }
 }
 
+/// Public proprietary API.
 impl KeyStore {
     pub fn new(path: &Path) -> Self {
         let connection = Connection::open(path).unwrap();
@@ -83,13 +94,21 @@ impl ToSql for KeyStoreIdentifier {
     }
 }
 
-impl KeyStoreTrait for KeyStore {
-    fn store(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
+impl FromSql for Status {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let raw = u8::column_result(value)?;
+        Self::try_from(raw).map_err(|_| FromSqlError::OutOfRange(raw.into()))
+    }
+}
+
+/// Private functions.
+impl KeyStore {
+    fn _store(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue, status: Status) -> Result<()> {
         let connection = self.sql.lock()?;
         connection
             .execute(
-                "INSERT INTO secrets (label, value) VALUES (?1, ?2)",
-                params![k.id()?, v.serialize()],
+                "INSERT INTO secrets (label, value, status) VALUES (?1, ?2, ?3)",
+                params![k.id()?, v.serialize()?, status as u8],
             )
             .map_err(|e| {
                 log::error!("SQL ERROR: {:?}", e);
@@ -98,27 +117,30 @@ impl KeyStoreTrait for KeyStore {
         Ok(())
     }
 
-    fn read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V> {
+    fn _read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V> {
         let connection = self.sql.lock()?;
-        let result: Vec<u8> = connection
+        let mut result: (Vec<u8>, Status) = connection
             .query_row(
-                "SELECT value FROM secrets WHERE label = ?1",
+                "SELECT value, status FROM secrets WHERE label = ?1",
                 params![k.id()?],
-                |row| Ok(row.get(0)?),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|e| {
                 log::error!("SQL ERROR: {:?}", e);
                 Error::ReadError
             })?;
-        V::deserialize(&result)
+        match result.1 {
+            Status::Extractable | Status::UnconfirmedExtractable => V::deserialize(&mut result.0),
+            Status::Hidden | Status::UnconfirmedHidden => Err(Error::ForbiddenExtraction),
+        }
     }
 
-    fn update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
+    fn _update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
         let connection = self.sql.lock()?;
         let updated_rows = connection
             .execute(
                 "UPDATE secrets SET value = ?1 WHERE label = ?2",
-                params![v.serialize(), k.id()?],
+                params![v.serialize()?, k.id()?],
             )
             .map_err(|e| {
                 log::error!("SQL ERROR: {:?}", e);
@@ -131,7 +153,7 @@ impl KeyStoreTrait for KeyStore {
         }
     }
 
-    fn delete(&self, k: &impl KeyStoreId) -> Result<()> {
+    fn _delete(&self, k: &impl KeyStoreId) -> Result<()> {
         let connection = self.sql.lock()?;
         connection
             .execute("DELETE FROM secrets WHERE label = ?1", params![k.id()?])
@@ -140,6 +162,24 @@ impl KeyStoreTrait for KeyStore {
                 Error::DeleteError
             })?;
         Ok(())
+    }
+}
+
+impl KeyStoreTrait for KeyStore {
+    fn store(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
+        self._store(k, v, Status::Extractable)
+    }
+
+    fn read<V: KeyStoreValue>(&self, k: &impl KeyStoreId) -> Result<V> {
+        self._read(k)
+    }
+
+    fn update(&self, k: &impl KeyStoreId, v: &impl KeyStoreValue) -> Result<()> {
+        self._update(k, v)
+    }
+
+    fn delete(&self, k: &impl KeyStoreId) -> Result<()> {
+        self._delete(k)
     }
 }
 
@@ -154,11 +194,54 @@ impl Supports for KeyStore {
 
     fn asymmetric_key_types(&self) -> Vec<AsymmetricKeyType> {
         vec![
-            AsymmetricKeyType::X25519,
-            AsymmetricKeyType::Ed25519,
-            AsymmetricKeyType::P256,
-            AsymmetricKeyType::EcdsaP256Sha256,
+            AsymmetricKeyType::KemKey(KemKeyType::X25519),
+            AsymmetricKeyType::SignatureKey(SignatureKeyType::Ed25519),
+            AsymmetricKeyType::KemKey(KemKeyType::P256),
+            AsymmetricKeyType::SignatureKey(SignatureKeyType::EcdsaP256Sha256),
         ]
+    }
+}
+
+#[inline]
+fn hash_type_to_evercrypt(hash: HashType) -> Result<DigestMode> {
+    Ok(match hash {
+        HashType::Sha1 => DigestMode::Sha1,
+        HashType::Sha2_224 => DigestMode::Sha224,
+        HashType::Sha2_256 => DigestMode::Sha256,
+        HashType::Sha2_384 => DigestMode::Sha256,
+        HashType::Sha2_512 => DigestMode::Sha512,
+        HashType::Sha3_224 => DigestMode::Sha3_224,
+        HashType::Sha3_256 => DigestMode::Sha3_256,
+        HashType::Sha3_384 => DigestMode::Sha3_384,
+        HashType::Sha3_512 => DigestMode::Sha3_512,
+    })
+}
+
+impl From<evercrypt::digest::Error> for Error {
+    fn from(e: evercrypt::digest::Error) -> Self {
+        Self::DigestError(format!("Evercrypt digest error: {:?}", e))
+    }
+}
+
+impl Hash for KeyStore {
+    type Hasher = evercrypt::digest::Digest;
+
+    fn hash(&self, hash: HashType, data: &[u8]) -> Result<Vec<u8>> {
+        Ok(evercrypt::digest::hash(hash_type_to_evercrypt(hash)?, data))
+    }
+
+    fn hasher(&self, hash: HashType) -> Result<Self::Hasher> {
+        evercrypt::digest::Digest::new(hash_type_to_evercrypt(hash)?).map_err(|e| e.into())
+    }
+}
+
+impl Hasher for evercrypt::digest::Digest {
+    fn update_hash<T>(&mut self, hasher: &T, data: &[u8]) -> Result<()> {
+        self.update(data).map_err(|e| e.into())
+    }
+
+    fn finish_hash<T>(&mut self, hasher: T) -> Result<Vec<u8>> {
+        self.finish().map_err(|e| e.into())
     }
 }
 
@@ -166,6 +249,7 @@ impl GenerateKeys for KeyStore {
     fn new_secret(
         &self,
         key_type: SymmetricKeyType,
+        status: Status,
         k: &impl KeyStoreId,
         label: &[u8],
     ) -> Result<()> {
@@ -174,31 +258,32 @@ impl GenerateKeys for KeyStore {
         }
         let mut randomness = rand::thread_rng();
         let secret = Secret::random_bor(&mut randomness, key_type, label);
-        self.store(k, &secret)
+        self._store(k, &secret, status)
     }
 
     fn new_key_pair(
         &self,
         key_type: AsymmetricKeyType,
-        k: Option<&impl KeyStoreId>,
+        status: Status,
         label: &[u8],
-    ) -> Result<(PublicKey, Option<PrivateKeyId>)> {
+    ) -> Result<(PublicKey, PrivateKeyId)> {
         let (public_key, private_key) = match key_type {
-            AsymmetricKeyType::X25519 => {
+            AsymmetricKeyType::KemKey(KemKeyType::X25519) => {
                 let private_key = x25519::key_gen();
                 let public_key = x25519::dh_base(&private_key);
                 let public_key = PublicKey::from(key_type, &public_key, label);
                 let private_key = PrivateKey::from(key_type, &private_key, label, &public_key);
                 (public_key, private_key)
             }
-            AsymmetricKeyType::Ed25519 => {
+            AsymmetricKeyType::SignatureKey(SignatureKeyType::Ed25519) => {
                 let private_key = ed25519::key_gen();
                 let public_key = ed25519::sk2pk(&private_key);
                 let public_key = PublicKey::from(key_type, &public_key, label);
                 let private_key = PrivateKey::from(key_type, &private_key, label, &public_key);
                 (public_key, private_key)
             }
-            AsymmetricKeyType::P256 | AsymmetricKeyType::EcdsaP256Sha256 => {
+            AsymmetricKeyType::SignatureKey(SignatureKeyType::EcdsaP256Sha256)
+            | AsymmetricKeyType::KemKey(KemKeyType::P256) => {
                 let private_key = p256::key_gen().map_err(|e| {
                     Error::CryptoLibError(format!("P256 key generation error: {:?}", e))
                 })?;
@@ -210,14 +295,11 @@ impl GenerateKeys for KeyStore {
             }
             _ => return Err(Error::UnsupportedKeyType(key_type)),
         };
-        let id = if let Some(id) = k {
-            self.store(id, &private_key)?;
-            None
-        } else {
-            let id = PrivateKeyId::new(label, public_key.as_slice());
-            self.store(&id, &private_key)?;
-            Some(id)
-        };
+        let mut sha256 = self.hasher(HashType::Sha2_256)?;
+        sha256.update(label)?;
+        sha256.update(public_key.as_slice())?;
+        let id = sha256.finish()?;
+        self._store(&id, &private_key, status)?;
         Ok((public_key, id))
     }
 }
@@ -494,14 +576,12 @@ impl HpkeDerive for KeyStore {
 
 fn evercrypt_signature_type(key_type: AsymmetricKeyType) -> Result<signature::Mode> {
     match key_type {
-        AsymmetricKeyType::Ed25519 => Ok(signature::Mode::Ed25519),
-        AsymmetricKeyType::P256 => Ok(signature::Mode::P256),
-        AsymmetricKeyType::X25519
-        | AsymmetricKeyType::Ed448
-        | AsymmetricKeyType::EcdsaP256Sha256
-        | AsymmetricKeyType::EcdsaP521Sha512 => {
-            return Err(Error::UnsupportedAlgorithm(format!("{:?}", key_type)))
+        AsymmetricKeyType::SignatureKey(SignatureKeyType::Ed25519) => Ok(signature::Mode::Ed25519),
+        AsymmetricKeyType::SignatureKey(SignatureKeyType::EcdsaP256Sha256)
+        | AsymmetricKeyType::SignatureKey(SignatureKeyType::EcdsaP521Sha512) => {
+            Ok(signature::Mode::P256)
         }
+        _ => return Err(Error::UnsupportedAlgorithm(format!("{:?}", key_type))),
     }
 }
 
@@ -541,6 +621,7 @@ fn evercrypt_hash_type(
     if let Some(hash) = hash.into() {
         Some(match hash {
             HashType::Sha1 => evercrypt_digest::Mode::Sha1,
+            HashType::Sha2_224 => evercrypt_digest::Mode::Sha224,
             HashType::Sha2_256 => evercrypt_digest::Mode::Sha256,
             HashType::Sha2_384 => evercrypt_digest::Mode::Sha384,
             HashType::Sha2_512 => evercrypt_digest::Mode::Sha512,
@@ -606,6 +687,7 @@ mod tests {
 
     #[test]
     fn basic() {
+        let _ = pretty_env_logger::try_init();
         // let ks = KeyStore::new(Path::new("test-db.sqlite"));
         // let ks = KeyStore::open(Path::new("test-db.sqlite"));
         let ks = KeyStore::default();
@@ -640,5 +722,16 @@ mod tests {
         ks.update(&id, &secret2).unwrap();
         let secret_again = ks.read(&id).unwrap();
         assert_eq!(secret2, secret_again);
+
+        let (pk, sk_id) = ks
+            .new_key_pair(
+                AsymmetricKeyType::KemKey(KemKeyType::X25519),
+                Status::Hidden,
+                b"hidden x25519 key pair",
+            )
+            .expect("Error generating x25519 key pair");
+        let err: Result<PrivateKey> = ks.read(&sk_id);
+        assert_eq!(err.err(), Some(Error::ForbiddenExtraction));
+        // ks.seal_to_pk(kem, kdf, aead, key, info, aad, payload)
     }
 }

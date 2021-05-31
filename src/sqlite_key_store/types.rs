@@ -8,15 +8,14 @@
     unused_qualifications
 )]
 
-use std::convert::{TryFrom, TryInto};
-
+use tls_codec::{Deserialize, SecretTlsVecU16, Serialize, TlsDeserialize, TlsSerialize};
 use zeroize::Zeroize;
 
 use crate::{
-    keys::{AsymmetricKeyError, PublicKey},
-    traits::{private::PrivateKeyStoreValue, KeyStoreValue},
+    keys::PublicKey,
+    traits::KeyStoreValue,
     types::AsymmetricKeyType,
-    util::{equal_ct, U16_LEN, U32_LEN},
+    util::equal_ct,
     Result,
 };
 
@@ -25,12 +24,16 @@ use crate::{
 /// A private key is a byte vector with an associated `AsymmetricKeyType` and an
 /// arbitrary label.
 /// Optionally the public key can be stored alongside the private key.
-#[derive(Eq, Zeroize)]
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Eq, Zeroize, TlsSerialize, TlsDeserialize)]
 #[zeroize(drop)]
 pub struct PrivateKey {
-    value: Vec<u8>,
+    value: SecretTlsVecU16<u8>,
     key_type: AsymmetricKeyType,
-    label: Vec<u8>,
+    label: SecretTlsVecU16<u8>,
     public_key: Option<PublicKey>,
 }
 
@@ -42,14 +45,14 @@ impl PrivateKey {
         public_key: impl Into<Option<&'a PublicKey>>,
     ) -> Self {
         Self {
-            value: value.to_vec(),
+            value: value.to_vec().into(),
             key_type,
-            label: label.to_vec(),
+            label: label.to_vec().into(),
             public_key: public_key.into().cloned(),
         }
     }
     pub(crate) fn as_slice(&self) -> &[u8] {
-        &self.value
+        self.value.as_slice()
     }
     pub(crate) fn key_type(&self) -> AsymmetricKeyType {
         self.key_type
@@ -70,58 +73,17 @@ impl PartialEq for PrivateKey {
             log::error!("The two keys have different lengths.");
             return false;
         }
-        equal_ct(&self.value, &other.value)
+        equal_ct(self.value.as_slice(), other.value.as_slice())
     }
 }
 
-impl KeyStoreValue for PrivateKey {}
-
-impl PrivateKeyStoreValue for PrivateKey {
-    fn serialize(&self) -> Vec<u8> {
-        let serialized_public_key = self.public_key.as_ref().map(|pk| pk.serialize());
-        let serialized_public_key_len = serialized_public_key.as_ref().map_or(0, |pk| pk.len());
-        let mut out = Vec::with_capacity(
-            U32_LEN /* value len */ + self.value.len() + U16_LEN /* key type */ + U16_LEN /* label len */ + self.label.len() + 1 /* Option */ + serialized_public_key_len,
-        );
-        out.extend((self.value.len() as u32).to_be_bytes().iter());
-        out.extend(self.value.iter());
-        let key_type: u16 = self.key_type.into();
-        out.extend(key_type.to_be_bytes().iter());
-        out.extend((self.label.len() as u16).to_be_bytes().iter());
-        out.extend(self.label.iter());
-        out.push(match self.public_key {
-            Some(_) => 1,
-            None => 0,
-        });
-        if let Some(mut pk) = serialized_public_key {
-            out.append(&mut pk);
-        }
-        out
+impl KeyStoreValue for PrivateKey {
+    fn serialize(&self) -> Result<Vec<u8>> {
+        Ok(self.tls_serialize_detached().unwrap())
     }
 
-    fn deserialize(raw: &[u8]) -> Result<Self> {
-        let (value_len_bytes, raw) = raw.split_at(U32_LEN);
-        let value_len = u32::from_be_bytes(value_len_bytes.try_into().unwrap());
-        let (value, raw) = raw.split_at(value_len.try_into().unwrap());
-        let (key_type, raw) = raw.split_at(U16_LEN);
-        let (label_len_bytes, label) = raw.split_at(U16_LEN);
-        if label.len() != u16::from_be_bytes(label_len_bytes.try_into().unwrap()).into() {
-            return Err(AsymmetricKeyError::InvalidSerialization.into());
-        }
-        let (public_key_op, raw) = raw.split_at(1);
-        let public_key = if public_key_op[0] == 1 {
-            Some(PublicKey::deserialize(raw)?)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            value: value.to_vec(),
-            key_type: AsymmetricKeyType::try_from(u16::from_be_bytes(
-                key_type.try_into().unwrap(),
-            ))?,
-            label: label.to_vec(),
-            public_key,
-        })
+    fn deserialize(raw: &mut [u8]) -> Result<Self> {
+        // XXX: can we do this without copy please?
+        Ok(Self::tls_deserialize(&mut raw.as_ref()).unwrap())
     }
 }

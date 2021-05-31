@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use lazy_static::lazy_static;
 
-use self::traits::{Aead, Digest, Provider};
+use self::traits::{Aead, Algorithm, Digest, Provider};
 
+pub mod algorithms;
 pub mod base_provider;
 pub mod traits;
-pub mod algorithms;
 
-lazy_static! {
-    pub static ref REGISTRY: Registry = Registry::new();
-}
+// lazy_static! {
+//     pub static ref REGISTRY: Registry = Registry::new();
+// }
 
 /// The `Registry` holding all providers.
 #[derive(Debug)]
@@ -36,7 +36,7 @@ macro_rules! get_algorithm {
 
 impl Registry {
     /// Initialise the `Registry`.
-    fn new() -> Registry {
+    pub fn new() -> Registry {
         Registry {
             providers: Arc::new(Mutex::new(Vec::new())),
         }

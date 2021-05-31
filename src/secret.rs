@@ -1,14 +1,12 @@
-use std::{
-    array::TryFromSliceError,
-    convert::{TryFrom, TryInto},
-    fmt::Debug,
-};
+use std::{array::TryFromSliceError, fmt::Debug};
 
 use rand::{CryptoRng, RngCore};
+use tls_codec::{Deserialize, SecretTlsVecU16, Serialize};
+use tls_codec::{TlsDeserialize, TlsSerialize};
 use zeroize::Zeroize;
 
 use crate::{
-    traits::{private::PrivateKeyStoreValue, KeyStoreValue},
+    traits::{KeyStoreValue},
     types::SymmetricKeyType,
     util::{bytes_to_hex, equal_ct, U16_LEN, U32_LEN},
     Error, Result,
@@ -28,12 +26,12 @@ impl From<TryFromSliceError> for SymmetricKeyError {
     }
 }
 
-#[derive(Eq, Zeroize)]
+#[derive(Eq, Zeroize, TlsDeserialize, TlsSerialize)]
 #[zeroize(drop)]
 pub struct Secret {
-    value: Vec<u8>,
+    value: SecretTlsVecU16<u8>,
     key_type: SymmetricKeyType,
-    label: Vec<u8>,
+    label: SecretTlsVecU16<u8>,
 }
 
 impl PartialEq for Secret {
@@ -50,7 +48,7 @@ impl PartialEq for Secret {
             log::error!("The two secrets have different lengths.");
             return false;
         }
-        equal_ct(&self.value, &other.value)
+        equal_ct(self.value.as_slice(), other.value.as_slice())
     }
 }
 
@@ -62,7 +60,7 @@ impl Debug for Secret {
             "Secret {{\n  value: {}\n  key_type: {:?}\n label: {}\n}}",
             &"***",
             self.key_type,
-            bytes_to_hex(&self.label)
+            bytes_to_hex(self.label.as_slice())
         )
     }
 }
@@ -73,9 +71,9 @@ impl Debug for Secret {
         write!(
             f,
             "Secret {{\n  value: {}\n  key_type: {:?}\n label: {}\n}}",
-            bytes_to_hex(&self.value),
+            bytes_to_hex(self.value.as_slice()),
             self.key_type,
-            bytes_to_hex(&self.label)
+            bytes_to_hex(self.label.as_slice())
         )
     }
 }
@@ -88,7 +86,7 @@ impl Secret {
         Self {
             value,
             key_type,
-            label: label.to_vec(),
+            label: label.into(),
         }
     }
 
@@ -100,9 +98,9 @@ impl Secret {
         let mut value = vec![0u8; key_type.len()];
         randomness.fill_bytes(&mut value);
         Self {
-            value,
+            value: value.into(),
             key_type,
-            label: label.to_vec(),
+            label: label.into(),
         }
     }
 
@@ -116,7 +114,7 @@ impl Secret {
         key_type: SymmetricKeyType,
         label: &[u8],
     ) -> Result<Self> {
-        Self::try_from(b.to_vec(), key_type, label)
+        Self::try_from(b.into(), key_type, label)
     }
 
     pub(crate) fn try_from(b: Vec<u8>, key_type: SymmetricKeyType, label: &[u8]) -> Result<Self> {
@@ -127,47 +125,24 @@ impl Secret {
             )));
         }
         Ok(Self {
-            value: b,
+            value: b.into(),
             key_type,
-            label: label.to_vec(),
+            label: label.into(),
         })
     }
 
     pub(crate) fn as_slice(&self) -> &[u8] {
-        &self.value
+        self.value.as_slice()
     }
 }
 
-impl KeyStoreValue for Secret {}
-
-impl PrivateKeyStoreValue for Secret {
-    fn serialize(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(
-            U32_LEN /* value len */ + self.value.len() + U32_LEN /* key type */ + U16_LEN /* label len */ + self.label.len(),
-        );
-        out.extend((self.value.len() as u32).to_be_bytes().iter());
-        out.extend(self.value.iter());
-        let key_type: u32 = self.key_type.into();
-        out.extend(key_type.to_be_bytes().iter());
-        out.extend((self.label.len() as u16).to_be_bytes().iter());
-        out.extend(self.label.iter());
-        out
+impl KeyStoreValue for Secret {
+    fn serialize(&self) -> Result<Vec<u8>> {
+        Ok(self.tls_serialize_detached().unwrap())
     }
 
-    fn deserialize(raw: &[u8]) -> Result<Self> {
-        let (value_len_bytes, raw) = raw.split_at(U32_LEN);
-        let value_len = u32::from_be_bytes(value_len_bytes.try_into().unwrap());
-        let (value, raw) = raw.split_at(value_len.try_into().unwrap());
-        let (key_type, raw) = raw.split_at(U32_LEN);
-        let (label_len_bytes, label) = raw.split_at(U16_LEN);
-        if label.len() != u16::from_be_bytes(label_len_bytes.try_into().unwrap()).into() {
-            return Err(SymmetricKeyError::InvalidSerialization.into());
-        }
-
-        Ok(Self {
-            value: value.to_vec(),
-            key_type: SymmetricKeyType::try_from(u32::from_be_bytes(key_type.try_into().unwrap()))?,
-            label: label.to_vec(),
-        })
+    fn deserialize(raw: &mut [u8]) -> Result<Self> {
+        // XXX: can we do this without copy please?
+        Ok(Self::tls_deserialize(&mut raw.as_ref()).unwrap())
     }
 }

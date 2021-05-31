@@ -39,4 +39,4 @@ random = [] # Enable functions that require randomness such as key generation
 hazmat = [] # ☣️ enable unsafe features
 sqlite-backend = ["rusqlite", "evercrypt-backend"] # enable the builtin sqlite key store
 evercrypt-backend = ["evercrypt", "hpke"]
-serialization = ["serde", "serde_json", "evercrypt/serialization", "hpke/serialization"]
+serialization = ["serde", "serde_json", "evercrypt/serialization", "hpke/serialization", "tls_codec/serde_serialize"]

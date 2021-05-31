@@ -1,9 +1,10 @@
 use crate::{
+    crypto_registry::traits::CryptoRegistry,
     keys::PublicKey,
     secret::Secret,
     types::{
         AeadType, AsymmetricKeyType, Ciphertext, HashType, HpkeKdfType, HpkeKemType, KemOutput,
-        Plaintext, PrivateKeyId, Signature, SymmetricKeyType,
+        Plaintext, PrivateKeyId, Signature, Status, SymmetricKeyType,
     },
     KeyStoreIdentifier, Result,
 };
@@ -24,22 +25,14 @@ pub trait KeyStoreTrait: Send + Sync {
         Self: Sized;
 }
 
-/// This private module is used to hide functionality of public traits.
-pub(crate) mod private {
-    use crate::Result;
-
-    #[doc(hidden)]
-    pub trait PrivateKeyStoreValue {
-        fn serialize(&self) -> Vec<u8>;
-        fn deserialize(raw: &[u8]) -> Result<Self>
-        where
-            Self: Sized;
-    }
-}
-
 /// Any value that is stored in the key store must implement this trait.
 /// In most cases these are the raw bytes of the object.
-pub trait KeyStoreValue: private::PrivateKeyStoreValue {}
+pub trait KeyStoreValue {
+    fn serialize(&self) -> Result<Vec<u8>>;
+    fn deserialize(raw: &mut [u8]) -> Result<Self>
+    where
+        Self: Sized;
+}
 
 /// Any value that is used as key to index values in the key store mut implement
 /// this trait.
@@ -62,29 +55,39 @@ pub trait Supports {
 }
 
 /// Generate keys.
-pub trait GenerateKeys {
+pub trait GenerateKeys: Hash {
     fn new_secret(
         &self,
         key_type: SymmetricKeyType,
+        status: Status,
         k: &impl KeyStoreId,
         label: &[u8],
     ) -> Result<()>;
     fn new_key_pair(
         &self,
         key_type: AsymmetricKeyType,
-        k: Option<&impl KeyStoreId>,
+        status: Status,
         label: &[u8],
-    ) -> Result<(PublicKey, Option<PrivateKeyId>)>;
+    ) -> Result<(PublicKey, PrivateKeyId)>;
 }
 
 /// Hashing
 pub trait Hash {
+    type Hasher;
+
+    /// Single-shot hash
     fn hash(&self, hash: HashType, data: &[u8]) -> Result<Vec<u8>>;
-    fn hasher<T>(&self, hash: HashType) -> Result<T>
+
+    /// Get a stateful hasher object
+    fn hasher(&self, hash: HashType) -> Result<Self::Hasher>
     where
         Self: Sized;
-    fn update_hash<T>(&self, hasher: &T, data: &[u8]) -> Result<()>;
-    fn finish_hash<T>(&self, hasher: T) -> Result<Vec<u8>>;
+}
+
+/// Streaming API for hashing
+pub trait Hasher {
+    fn update_hash<T>(&mut self, hasher: &T, data: &[u8]) -> Result<()>;
+    fn finish_hash<T>(&mut self, hasher: T) -> Result<Vec<u8>>;
 }
 
 /// HKDF

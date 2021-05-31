@@ -1,15 +1,16 @@
-use std::collections::HashMap;
+use std::{any::Any, collections::HashMap};
 
 use evercrypt::prelude::*;
 use key_store::crypto_registry::{
     base_provider::BaseProvider,
     traits::{Aead, Algorithm, Digest, Error},
-    REGISTRY,
+    Registry,
 };
 
 #[test]
 pub fn init() {
-    let supported = REGISTRY.supports("some algorithm");
+    let registry = Registry::new();
+    let supported = registry.supports("some algorithm");
     assert_eq!(false, supported);
 }
 
@@ -24,8 +25,11 @@ macro_rules! implement_aead {
         }
 
         impl Algorithm for $provider_name {
-            fn get_name() -> String {
+            fn name() -> String {
                 $string_id.to_owned()
+            }
+            fn as_any(&self) -> Box<dyn Any> {
+                Box::new(self.get_instance())
             }
         }
 
@@ -118,13 +122,42 @@ impl EvercryptProvider {
 
         let digest_map: HashMap<_, Box<dyn Digest>> = HashMap::new();
 
-        BaseProvider::new(aead_map, digest_map)
+        BaseProvider::new("EvercryptProvider", aead_map, digest_map)
     }
 }
 
 #[test]
 pub fn provider_support() {
-    REGISTRY.add(EvercryptProvider::new());
-    let aes128gcm = REGISTRY.supports("AES-GCM-128");
+    let registry = Registry::new();
+    registry.add(EvercryptProvider::new());
+    let aes128gcm = registry.supports("AES-GCM-128");
     assert_eq!(true, aes128gcm);
+}
+
+#[test]
+pub fn provider_algorithm() {
+    let registry = Registry::new();
+    registry.add(EvercryptProvider::new());
+    let aes128gcm = registry
+        .aead("AES-GCM-128")
+        .expect("AES-GCM-128 should have been available");
+    let key = aes128gcm.key_gen();
+    let (ctxt, tag) = aes128gcm
+        .encrypt(
+            &key,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            &[],
+            b"encrypted with aes gcm 128",
+        )
+        .unwrap();
+    let msg = aes128gcm
+        .decrypt(
+            &key,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            &[],
+            &ctxt,
+            &tag,
+        )
+        .unwrap();
+    assert_eq!(msg, b"encrypted with aes gcm 128");
 }
