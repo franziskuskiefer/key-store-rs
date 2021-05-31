@@ -35,6 +35,5 @@ tls_codec = { path = "../tls-codec/tls_codec" }
 default = []
 random = [] # Enable functions that require randomness such as key generation
 hazmat = [] # ☣️ enable unsafe features
-sqlite-backend = ["rusqlite", "evercrypt-backend"] # enable the builtin sqlite key store
-evercrypt-backend = ["evercrypt", "hpke"]
+sqlite-backend = ["rusqlite", "evercrypt", "hpke"] # enable the builtin sqlite key store
 serialization = ["serde", "serde_json", "evercrypt/serialization", "hpke/serialization", "tls_codec/serde_serialize"]
