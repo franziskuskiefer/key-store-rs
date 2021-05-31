@@ -1,5 +1,4 @@
 use crate::{
-    crypto_registry::traits::CryptoRegistry,
     keys::PublicKey,
     secret::Secret,
     types::{
@@ -73,21 +72,21 @@ pub trait GenerateKeys: Hash {
 
 /// Hashing
 pub trait Hash {
-    type Hasher;
+    type StatefulHasher;
 
     /// Single-shot hash
     fn hash(&self, hash: HashType, data: &[u8]) -> Result<Vec<u8>>;
 
-    /// Get a stateful hasher object
-    fn hasher(&self, hash: HashType) -> Result<Self::Hasher>
+    /// Get a stateful hasher object for the streaming API.
+    fn hasher(&self, hash: HashType) -> Result<Self::StatefulHasher>
     where
         Self: Sized;
 }
 
 /// Streaming API for hashing
 pub trait Hasher {
-    fn update_hash<T>(&mut self, hasher: &T, data: &[u8]) -> Result<()>;
-    fn finish_hash<T>(&mut self, hasher: T) -> Result<Vec<u8>>;
+    fn update(&mut self, data: &[u8]) -> Result<()>;
+    fn finish(&mut self) -> Result<Vec<u8>>;
 }
 
 /// HKDF

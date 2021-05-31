@@ -1,14 +1,10 @@
 use std::{
     convert::{TryFrom, TryInto},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::Mutex,
 };
 
 use crate::{
-    crypto_registry::{
-        algorithms::SHA2_256,
-        traits::{CryptoRegistry, Provider},
-    },
     keys::{AsymmetricKeyError, PublicKey},
     secret::Secret,
     traits::{
@@ -29,7 +25,7 @@ use evercrypt::{
 use hpke::{self, Hpke};
 use rusqlite::{
     params,
-    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput},
+    types::{FromSql, FromSqlError, ToSqlOutput},
     Connection, OpenFlags, ToSql,
 };
 
@@ -224,23 +220,23 @@ impl From<evercrypt::digest::Error> for Error {
 }
 
 impl Hash for KeyStore {
-    type Hasher = evercrypt::digest::Digest;
+    type StatefulHasher = evercrypt::digest::Digest;
 
     fn hash(&self, hash: HashType, data: &[u8]) -> Result<Vec<u8>> {
         Ok(evercrypt::digest::hash(hash_type_to_evercrypt(hash)?, data))
     }
 
-    fn hasher(&self, hash: HashType) -> Result<Self::Hasher> {
+    fn hasher(&self, hash: HashType) -> Result<Self::StatefulHasher> {
         evercrypt::digest::Digest::new(hash_type_to_evercrypt(hash)?).map_err(|e| e.into())
     }
 }
 
 impl Hasher for evercrypt::digest::Digest {
-    fn update_hash<T>(&mut self, hasher: &T, data: &[u8]) -> Result<()> {
+    fn update(&mut self, data: &[u8]) -> Result<()> {
         self.update(data).map_err(|e| e.into())
     }
 
-    fn finish_hash<T>(&mut self, hasher: T) -> Result<Vec<u8>> {
+    fn finish(&mut self) -> Result<Vec<u8>> {
         self.finish().map_err(|e| e.into())
     }
 }

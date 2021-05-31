@@ -4,7 +4,6 @@ use keys::AsymmetricKeyError;
 use secret::SymmetricKeyError;
 use types::{AsymmetricKeyType, SymmetricKeyType};
 
-pub mod crypto_registry;
 pub mod keys;
 pub mod secret;
 pub mod traits;
