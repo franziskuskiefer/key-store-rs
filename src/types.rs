@@ -1,5 +1,5 @@
 use std::{
-    convert::{TryFrom, TryInto},
+    convert::{TryFrom},
     io::Write,
     usize,
 };
@@ -287,6 +287,10 @@ pub enum AeadType {
     Export = 0xFFFF,
 }
 
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[derive(Debug, PartialEq, Eq, Zeroize, Clone, Copy)]
 #[repr(u16)]
 /// Hash types
@@ -379,13 +383,18 @@ impl KemOutput {
     }
 }
 
+#[cfg_attr(
+    feature = "serialization",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Signature {
     value: Vec<u8>,
     hash_type: Option<HashType>,
 }
 
 impl Signature {
-    pub(crate) fn new(value: Vec<u8>, hash_type: impl Into<Option<HashType>>) -> Self {
+    pub fn new(value: Vec<u8>, hash_type: impl Into<Option<HashType>>) -> Self {
         Self {
             value,
             hash_type: hash_type.into(),

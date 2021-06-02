@@ -55,7 +55,8 @@ pub struct PublicKey {
 }
 
 impl PublicKey {
-    pub(crate) fn from(key_type: AsymmetricKeyType, value: &[u8], label: &[u8]) -> Self {
+    /// Create a new public key from the raw byte values.
+    pub fn from(key_type: AsymmetricKeyType, value: &[u8], label: &[u8]) -> Self {
         Self {
             value: value.to_vec().into(),
             key_type,
@@ -63,9 +64,11 @@ impl PublicKey {
         }
     }
 
-    pub(crate) fn as_slice(&self) -> &[u8] {
+    /// Get the raw public key bytes as byte slice.
+    pub fn as_slice(&self) -> &[u8] {
         self.value.as_slice()
     }
+
     pub(crate) fn key_type(&self) -> AsymmetricKeyType {
         self.key_type
     }
