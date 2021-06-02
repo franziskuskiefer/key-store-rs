@@ -75,7 +75,7 @@ mod tests {
         assert_eq!(err.err(), Some(Error::ForbiddenExtraction));
 
         let (ct, enc) = ks
-            .seal_to_pk(
+            .hpke_seal_to_pk(
                 HpkeKdfType::HkdfSha256,
                 AeadType::Aes128Gcm,
                 &pk,
@@ -86,7 +86,7 @@ mod tests {
             .expect("Error sealing to PK");
 
         let msg = ks
-            .open_with_sk(
+            .hpke_open_with_sk(
                 HpkeKdfType::HkdfSha256,
                 AeadType::Aes128Gcm,
                 &sk_id,

@@ -6,7 +6,7 @@ use tls_codec::{TlsDeserialize, TlsSerialize};
 use zeroize::Zeroize;
 
 use crate::{
-    traits::{KeyStoreValue},
+    traits::KeyStoreValue,
     types::SymmetricKeyType,
     util::{bytes_to_hex, equal_ct, U16_LEN, U32_LEN},
     Error, Result,

@@ -12,11 +12,7 @@ use tls_codec::{Deserialize, SecretTlsVecU16, Serialize, TlsDeserialize, TlsSeri
 use zeroize::Zeroize;
 
 use crate::{
-    keys::PublicKey,
-    traits::KeyStoreValue,
-    types::AsymmetricKeyType,
-    util::equal_ct,
-    Result,
+    keys::PublicKey, traits::KeyStoreValue, types::AsymmetricKeyType, util::equal_ct, Result,
 };
 
 /// # Private key

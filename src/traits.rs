@@ -142,6 +142,8 @@ pub trait HkdfDerive {
 
 /// AEAD
 pub trait Seal {
+    /// Encrypt the `msg` with the given parameters and return the cipher text
+    /// and tag values as byte vectors in `Ciphertext`.
     fn seal(
         &self,
         aead: AeadType,
@@ -150,13 +152,60 @@ pub trait Seal {
         aad: &[u8],
         nonce: &[u8],
     ) -> Result<Ciphertext>;
+
+    /// Encrypt the `msg` with the given parameters and return the cipher text
+    /// and tag concatenated in a byte vector.
+    fn seal_combined(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &[u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Vec<u8>>;
+
+    /// Encrypt the `msg` with the given parameters and return the cipher text
+    /// in place of the msg and the tag as byte vector.
+    fn seal_in_place(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &mut [u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Vec<u8>>;
+
+    /// Encrypt the `msg` with the given parameters and return the cipher text
+    /// in place of the msg.
+    /// *NOTE* that this requires the msg slice to be of length input msg + tag length.
+    fn seal_in_place_combined(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &mut [u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<()>;
 }
 pub trait Open {
+    /// Decrypt the `cipher_text` with the given parameters and return the plain
+    /// text as byte vector.
     fn open(
         &self,
         aead: AeadType,
         key_id: &impl KeyStoreId,
         cipher_text: &Ciphertext,
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Plaintext>;
+
+    /// Decrypt the `cipher_text`, which is the concatenated cipher text and tag,
+    /// with the given parameters and return the plain text as byte vector.
+    fn open_combined(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        cipher_text: &[u8],
         aad: &[u8],
         nonce: &[u8],
     ) -> Result<Plaintext>;
@@ -167,7 +216,7 @@ pub trait Open {
 /// Only single-shot, base-mode HPKE is supported for now.
 pub trait HpkeSeal {
     /// Encrypt the `payload` to the public key stored for `key_id`.
-    fn seal(
+    fn hpke_seal(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -178,7 +227,7 @@ pub trait HpkeSeal {
     ) -> Result<(Vec<u8>, KemOutput)>;
 
     /// Encrypt the `payload` to the public `key`.
-    fn seal_to_pk(
+    fn hpke_seal_to_pk(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -189,7 +238,7 @@ pub trait HpkeSeal {
     ) -> Result<(Vec<u8>, KemOutput)>;
 
     /// Encrypt the secret stored for `secret_id` to the public key stored for `key_id`.
-    fn seal_secret(
+    fn hpke_seal_secret(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -200,7 +249,7 @@ pub trait HpkeSeal {
     ) -> Result<(Vec<u8>, KemOutput)>;
 
     /// Encrypt the secret stored for `secret_id` to the public `key`.
-    fn seal_secret_to_pk(
+    fn hpke_seal_secret_to_pk(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -213,7 +262,7 @@ pub trait HpkeSeal {
 
 pub trait HpkeOpen {
     /// Open an HPKE `cipher_text` with the private key of the given `key_id`.
-    fn open_with_sk(
+    fn hpke_open_with_sk(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,

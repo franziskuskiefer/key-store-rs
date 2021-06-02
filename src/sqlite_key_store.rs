@@ -402,6 +402,66 @@ impl Seal for KeyStore {
             .map_err(|e| Error::EncryptionError(format!("Error encrypting: {:?}", e)))?;
         Ok(Ciphertext::new(ct, tag))
     }
+
+    fn seal_combined(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &[u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Vec<u8>> {
+        // FIXME: use encrypt_combined in 0.0.10
+        let ct = self.seal(aead, key_id, msg, aad, nonce)?;
+        let (mut ct, mut tag) = ct.into();
+        ct.append(&mut tag);
+        Ok(ct)
+    }
+
+    fn seal_in_place(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &mut [u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Vec<u8>> {
+        // We can't do this in evercrypt.
+        let ct = self.seal(aead, key_id, msg, aad, nonce)?;
+        let (ct, tag) = ct.into();
+        if ct.len() != msg.len() {
+            return Err(Error::InvalidLength(format!(
+                "Cipher text has length {}. Message was {}.",
+                ct.len(),
+                msg.len()
+            )));
+        }
+        msg.clone_from_slice(&ct);
+        Ok(tag)
+    }
+
+    fn seal_in_place_combined(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        msg: &mut [u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<()> {
+        // We can't do this in evercrypt.
+        let ct = self.seal(aead, key_id, msg, aad, nonce)?;
+        let (mut ct, mut tag) = ct.into();
+        ct.append(&mut tag);
+        if ct.len() != msg.len() {
+            return Err(Error::InvalidLength(format!(
+                "Cipher text has length {}. Message was {}.",
+                ct.len(),
+                msg.len()
+            )));
+        }
+        msg.clone_from_slice(&ct);
+        Ok(())
+    }
 }
 
 impl Open for KeyStore {
@@ -426,6 +486,23 @@ impl Open for KeyStore {
         .map_err(|e| Error::DecryptionError(format!("Decryption encrypting: {:?}", e)))?;
         Ok(Plaintext::new(pt))
     }
+
+    fn open_combined(
+        &self,
+        aead: AeadType,
+        key_id: &impl KeyStoreId,
+        cipher_text: &[u8],
+        aad: &[u8],
+        nonce: &[u8],
+    ) -> Result<Plaintext> {
+        // FIXME: use decrypt_combined in 0.0.10
+        let (key, _status): (Secret, Status) = self.internal_read(key_id)?;
+        let mode = aead_type(aead)?;
+        let (ct, tag) = cipher_text.split_at(cipher_text.len() - aead::tag_size(mode));
+        let pt = aead::decrypt(mode, key.as_slice(), ct, tag, nonce, aad)
+            .map_err(|e| Error::DecryptionError(format!("Decryption encrypting: {:?}", e)))?;
+        Ok(Plaintext::new(pt))
+    }
 }
 
 fn evercrypt_kem_type(key_type: AsymmetricKeyType) -> Result<HpkeKemMode> {
@@ -440,7 +517,7 @@ fn evercrypt_kem_type(key_type: AsymmetricKeyType) -> Result<HpkeKemMode> {
 }
 
 impl HpkeSeal for KeyStore {
-    fn seal(
+    fn hpke_seal(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -450,10 +527,10 @@ impl HpkeSeal for KeyStore {
         payload: &[u8],
     ) -> Result<(Vec<u8>, KemOutput)> {
         let (pk_r, _status): (PublicKey, Status) = self.internal_read(key_id)?;
-        self.seal_to_pk(kdf, aead, &pk_r, info, aad, payload)
+        self.hpke_seal_to_pk(kdf, aead, &pk_r, info, aad, payload)
     }
 
-    fn seal_to_pk(
+    fn hpke_seal_to_pk(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -475,7 +552,7 @@ impl HpkeSeal for KeyStore {
         Ok((ciphertext, KemOutput::new(kem_output)))
     }
 
-    fn seal_secret(
+    fn hpke_seal_secret(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -485,10 +562,10 @@ impl HpkeSeal for KeyStore {
         secret_id: &impl KeyStoreId,
     ) -> Result<(Vec<u8>, KemOutput)> {
         let (pk_r, _status): (PublicKey, Status) = self.internal_read(key_id)?;
-        self.seal_secret_to_pk(kdf, aead, &pk_r, info, aad, secret_id)
+        self.hpke_seal_secret_to_pk(kdf, aead, &pk_r, info, aad, secret_id)
     }
 
-    fn seal_secret_to_pk(
+    fn hpke_seal_secret_to_pk(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,
@@ -521,7 +598,7 @@ impl HpkeSeal for KeyStore {
 }
 
 impl HpkeOpen for KeyStore {
-    fn open_with_sk(
+    fn hpke_open_with_sk(
         &self,
         kdf: HpkeKdfType,
         aead: AeadType,

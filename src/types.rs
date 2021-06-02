@@ -1,8 +1,4 @@
-use std::{
-    convert::{TryFrom},
-    io::Write,
-    usize,
-};
+use std::{convert::TryFrom, io::Write, usize};
 
 use tls_codec::{Deserialize, Serialize, TlsDeserialize, TlsSerialize, TlsSize};
 use zeroize::Zeroize;
@@ -343,6 +339,18 @@ pub enum HpkeKdfType {
 pub struct Ciphertext {
     ct: Vec<u8>,
     tag: Vec<u8>,
+}
+
+impl From<(Vec<u8>, Vec<u8>)> for Ciphertext {
+    fn from((ct, tag): (Vec<u8>, Vec<u8>)) -> Self {
+        Self { ct, tag }
+    }
+}
+
+impl Into<(Vec<u8>, Vec<u8>)> for Ciphertext {
+    fn into(self) -> (Vec<u8>, Vec<u8>) {
+        (self.ct, self.tag)
+    }
 }
 
 impl Ciphertext {

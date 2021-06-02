@@ -15,11 +15,7 @@
     unused_qualifications
 )]
 
-use crate::{
-    traits::KeyStoreValue,
-    types::AsymmetricKeyType,
-    Result,
-};
+use crate::{traits::KeyStoreValue, types::AsymmetricKeyType, Result};
 use tls_codec::{Deserialize, SecretTlsVecU16, Serialize, TlsDeserialize, TlsSerialize};
 use zeroize::Zeroize;
 
