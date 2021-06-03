@@ -1,5 +1,5 @@
 [package]
-name = "key-store"
+name = "key_store"
 version = "0.1.0"
 authors = ["Franziskus Kiefer <franziskuskiefer@gmail.com>"]
 edition = "2018"
@@ -11,12 +11,7 @@ path = "src/key-store.rs"
 log = "0.4"
 zeroize = { version = "1.3", features = ["zeroize_derive"] }
 rand = "0.8"
-# Used for the builtin sqlite key store if enabled
-rusqlite = { version = "0.25", optional = true }
-# The default crypto provider used for the builtin sqlite key store if enabled
-evercrypt = { version = "0.0.9", optional = true }
-# The default HPKE implementation used for the builtin sqlite key store if enabled
-hpke = { version = "0.0.8", package = "hpke-rs", optional = true, features = ["hazmat"] }
+crypto_algorithms = { version = "0.1", git = "https://github.com/franziskuskiefer/algorithm-identifiers-rs.git", branch = "main", features = ["serialization"]}
 # Serialization
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -24,8 +19,6 @@ tls_codec = { version = "0.1", git = "https://github.com/openmls/tls-codec.git",
 
 [dev-dependencies]
 pretty_env_logger = "0.4"
-digest = "0.9"
-sha2 = "0.9"
 
 [patch.'https://github.com/openmls/tls-codec.git']
 tls_codec = { path = "../tls-codec/tls_codec" }
@@ -34,5 +27,4 @@ tls_codec = { path = "../tls-codec/tls_codec" }
 default = []
 random = [] # Enable functions that require randomness such as key generation
 hazmat = [] # ☣️ enable unsafe features
-sqlite-backend = ["rusqlite", "evercrypt", "hpke"] # enable the builtin sqlite key store
-serialization = ["serde", "serde_json", "evercrypt/serialization", "hpke/serialization", "tls_codec/serde_serialize"]
+serialization = ["serde", "serde_json", "tls_codec/serde_serialize"]
