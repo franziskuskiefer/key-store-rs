@@ -29,7 +29,7 @@ pub trait KeyStore: Send + Sync {
 
     /// Store a value `v` that implements the [`KeyStoreValue`] trait for
     /// serialization for ID `k`.
-    /// The value will always be [`Status::Extractable`].
+    /// The status will always be [`Status::Extractable`].
     /// To set the status of the value `v` use
     /// [`store_with_status`](`KeyStore::store_with_status`).
     ///
