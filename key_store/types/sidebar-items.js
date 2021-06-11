@@ -1,0 +1,1 @@
+initSidebarItems({"enum":[["Status","The status of a value in the key store."],["StatusError","Errors thrown by operations on the [`Status`]."]]});

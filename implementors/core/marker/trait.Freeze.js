@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["key_store"] = [{"text":"impl Freeze for <a class=\"enum\" href=\"key_store/types/enum.StatusError.html\" title=\"enum key_store::types::StatusError\">StatusError</a>","synthetic":true,"types":["key_store::types::StatusError"]},{"text":"impl Freeze for <a class=\"enum\" href=\"key_store/types/enum.Status.html\" title=\"enum key_store::types::Status\">Status</a>","synthetic":true,"types":["key_store::types::Status"]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
