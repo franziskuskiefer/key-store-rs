@@ -2,10 +2,21 @@
 //!
 //! This module defines the [`Status`] enum.
 //! The [`Status`] defines values to tag key store values with.
+//!
+//! XXX: We might want to make the [`Status`] a trait type as well 🤔.
 
 use std::convert::TryFrom;
 
-use crate::{traits::KeyStoreValue, Error, KeyStoreResult};
+use crate::traits::KeyStoreValue;
+
+/// Errors thrown by operations on the [`Status`].
+pub enum StatusError {
+    /// The value can't be converted to a [`Status`].
+    InvalidStatus(String),
+
+    /// Deserializing a byte slice failed.
+    DeserializationError(String),
+}
 
 /// The status of a value in the key store.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +38,7 @@ pub enum Status {
 }
 
 impl TryFrom<u8> for Status {
-    type Error = crate::Error;
+    type Error = StatusError;
 
     fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
         Ok(match value {
@@ -36,7 +47,7 @@ impl TryFrom<u8> for Status {
             3 => Self::UnconfirmedExtractable,
             4 => Self::UnconfirmedHidden,
             _ => {
-                return Err(Error::InvalidStatus(format!(
+                return Err(Self::Error::InvalidStatus(format!(
                     "{} is not a valid status.",
                     value
                 )))
@@ -46,13 +57,17 @@ impl TryFrom<u8> for Status {
 }
 
 impl KeyStoreValue for Status {
-    fn serialize(&self) -> KeyStoreResult<Vec<u8>> {
+    type Error = StatusError;
+
+    type SerializedValue = Vec<u8>;
+
+    fn serialize(&self) -> Result<Self::SerializedValue, Self::Error> {
         Ok(vec![*self as u8])
     }
 
-    fn deserialize(raw: &mut [u8]) -> KeyStoreResult<Self> {
+    fn deserialize(raw: &mut [u8]) -> Result<Self, Self::Error> {
         if raw.len() < 1 {
-            return Err(Error::InvalidStatus(format!(
+            return Err(Self::Error::DeserializationError(format!(
                 "Can't deserialize an empty slice to a status."
             )));
         }

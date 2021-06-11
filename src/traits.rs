@@ -5,7 +5,7 @@
 //! and stores values that implement the (de)serialization define by the
 //! [`KeyStoreValue`] trait.
 
-use crate::{types::Status, KeyStoreResult};
+use crate::types::Status;
 
 /// The Key Store trait
 pub trait KeyStore: Send + Sync {
@@ -13,17 +13,19 @@ pub trait KeyStore: Send + Sync {
     /// the key store.
     type KeyStoreId;
 
+    /// The error type returned by the [`KeyStore`].
+    type Error;
+
     /// Store a value `v` that implements the [`KeyStoreValue`] trait for
     /// serialization with [`Status`] `s` under ID `k`.
     ///
     /// Returns an error if storing fails.
-    /// See [`Error`](`crate::Error`) for potential error values.
     fn store_with_status(
         &self,
         k: &Self::KeyStoreId,
         v: &impl KeyStoreValue,
         s: Status,
-    ) -> KeyStoreResult<()>
+    ) -> Result<(), Self::Error>
     where
         Self: Sized;
 
@@ -34,8 +36,7 @@ pub trait KeyStore: Send + Sync {
     /// [`store_with_status`](`KeyStore::store_with_status`).
     ///
     /// Returns an error if storing fails.
-    /// See [`Error`](`crate::Error`) for potential error values.
-    fn store(&self, k: &Self::KeyStoreId, v: &impl KeyStoreValue) -> KeyStoreResult<()>
+    fn store(&self, k: &Self::KeyStoreId, v: &impl KeyStoreValue) -> Result<(), Self::Error>
     where
         Self: Sized;
 
@@ -44,8 +45,7 @@ pub trait KeyStore: Send + Sync {
     /// If the value is marked as `Status::Hidden`, an error will be returned.
     ///
     /// Returns an error if storing fails.
-    /// See [`Error`](`crate::Error`) for potential error values.
-    fn read<V: KeyStoreValue>(&self, k: &Self::KeyStoreId) -> KeyStoreResult<V>
+    fn read<V: KeyStoreValue>(&self, k: &Self::KeyStoreId) -> Result<V, Self::Error>
     where
         Self: Sized;
 
@@ -53,16 +53,14 @@ pub trait KeyStore: Send + Sync {
     /// [`KeyStoreValue`] trait for serialization.
     ///
     /// Returns an error if storing fails.
-    /// See [`Error`](`crate::Error`) for potential error values.
-    fn update(&self, k: &Self::KeyStoreId, v: &impl KeyStoreValue) -> KeyStoreResult<()>
+    fn update(&self, k: &Self::KeyStoreId, v: &impl KeyStoreValue) -> Result<(), Self::Error>
     where
         Self: Sized;
 
     /// Delete a value stored for ID `k`.
     ///
     /// Returns an error if storing fails.
-    /// See [`Error`](`crate::Error`) for potential error values.
-    fn delete(&self, k: &Self::KeyStoreId) -> KeyStoreResult<()>
+    fn delete(&self, k: &Self::KeyStoreId) -> Result<(), Self::Error>
     where
         Self: Sized;
 }
@@ -70,15 +68,21 @@ pub trait KeyStore: Send + Sync {
 /// Any value that is stored in the key store must implement this trait.
 /// In most cases these are the raw bytes of the object.
 pub trait KeyStoreValue {
+    /// The error type returned by the [`KeyStoreValue`].
+    type Error;
+
+    /// The type of a serialized key store value.
+    type SerializedValue;
+
     /// Serialize the value and return it as byte vector.
     ///
-    /// Returns an [`Error`](`crate::Error`) if the serialization fails.
-    fn serialize(&self) -> KeyStoreResult<Vec<u8>>;
+    /// Returns an [`Error`](`KeyStoreValue::Error`) if the serialization fails.
+    fn serialize(&self) -> Result<Self::SerializedValue, Self::Error>;
 
     /// Deserialize the byte slice and return the object.
     ///
-    /// Returns an [`Error`](`crate::Error`) if the deserialization fails.
-    fn deserialize(raw: &mut [u8]) -> KeyStoreResult<Self>
+    /// Returns an [`Error`](`KeyStoreValue::Error`) if the deserialization fails.
+    fn deserialize(raw: &mut [u8]) -> Result<Self, Self::Error>
     where
         Self: Sized;
 }
