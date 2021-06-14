@@ -5,6 +5,8 @@
 //! and stores values that implement the (de)serialization define by the
 //! [`KeyStoreValue`] trait.
 
+use std::fmt::Debug;
+
 use crate::types::Status;
 
 /// The Key Store trait
@@ -14,7 +16,7 @@ pub trait KeyStore: Send + Sync {
     type KeyStoreId;
 
     /// The error type returned by the [`KeyStore`].
-    type Error;
+    type Error: Debug + Clone + PartialEq + Into<String>;
 
     /// Store a value `v` that implements the [`KeyStoreValue`] trait for
     /// serialization with [`Status`] `s` under ID `k`.
@@ -67,14 +69,18 @@ pub trait KeyStore: Send + Sync {
 
 /// Any value that is stored in the key store must implement this trait.
 /// In most cases these are the raw bytes of the object.
-pub trait KeyStoreValue {
+///
+/// The generic `Serialization` defaults to `Vec<u8>` but can be defined
+/// differently. The `serialize` return type `SerializedValue` must implement
+/// `Into<Serialization>`.
+pub trait KeyStoreValue<Serialization = Vec<u8>> {
     /// The error type returned by the [`KeyStoreValue`].
-    type Error;
+    type Error: Debug + Clone + PartialEq + Into<String>;
 
     /// The type of a serialized key store value.
-    type SerializedValue;
+    type SerializedValue: Into<Serialization>;
 
-    /// Serialize the value and return it as byte vector.
+    /// Serialize the value and return it as [`SerializedValue`](`KeyStoreValue::SerializedValue`).
     ///
     /// Returns an [`Error`](`KeyStoreValue::Error`) if the serialization fails.
     fn serialize(&self) -> Result<Self::SerializedValue, Self::Error>;

@@ -9,6 +9,7 @@ use std::convert::TryFrom;
 
 use crate::traits::KeyStoreValue;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 /// Errors thrown by operations on the [`Status`].
 pub enum StatusError {
     /// The value can't be converted to a [`Status`].
@@ -56,9 +57,14 @@ impl TryFrom<u8> for Status {
     }
 }
 
+impl Into<String> for StatusError {
+    fn into(self) -> String {
+        format!("StatusError {:?}", self)
+    }
+}
+
 impl KeyStoreValue for Status {
     type Error = StatusError;
-
     type SerializedValue = Vec<u8>;
 
     fn serialize(&self) -> Result<Self::SerializedValue, Self::Error> {
