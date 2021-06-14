@@ -77,6 +77,12 @@
 <span id="74">74</span>
 <span id="75">75</span>
 <span id="76">76</span>
+<span id="77">77</span>
+<span id="78">78</span>
+<span id="79">79</span>
+<span id="80">80</span>
+<span id="81">81</span>
+<span id="82">82</span>
 </pre><div class="example-wrap"><pre class="rust ">
 <span class="doccomment">//! # Key Store Types</span>
 <span class="doccomment">//!</span>
@@ -89,6 +95,7 @@
 
 <span class="kw">use</span> <span class="kw">crate</span>::<span class="ident">traits</span>::<span class="ident">KeyStoreValue</span>;
 
+<span class="attribute">#[<span class="ident">derive</span>(<span class="ident">Debug</span>, <span class="ident">Clone</span>, <span class="ident">PartialEq</span>, <span class="ident">Eq</span>)]</span>
 <span class="doccomment">/// Errors thrown by operations on the [`Status`].</span>
 <span class="kw">pub</span> <span class="kw">enum</span> <span class="ident">StatusError</span> {
     <span class="doccomment">/// The value can&#39;t be converted to a [`Status`].</span>
@@ -136,9 +143,14 @@
     }
 }
 
+<span class="kw">impl</span> <span class="ident">Into</span><span class="op">&lt;</span><span class="ident">String</span><span class="op">&gt;</span> <span class="kw">for</span> <span class="ident">StatusError</span> {
+    <span class="kw">fn</span> <span class="ident">into</span>(<span class="self">self</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="ident">String</span> {
+        <span class="macro">format</span><span class="macro">!</span>(<span class="string">&quot;StatusError {:?}&quot;</span>, <span class="self">self</span>)
+    }
+}
+
 <span class="kw">impl</span> <span class="ident">KeyStoreValue</span> <span class="kw">for</span> <span class="ident">Status</span> {
     <span class="kw">type</span> <span class="ident">Error</span> <span class="op">=</span> <span class="ident">StatusError</span>;
-
     <span class="kw">type</span> <span class="ident">SerializedValue</span> <span class="op">=</span> <span class="ident">Vec</span><span class="op">&lt;</span><span class="ident">u8</span><span class="op">&gt;</span>;
 
     <span class="kw">fn</span> <span class="ident">serialize</span>(<span class="kw-2">&amp;</span><span class="self">self</span>) <span class="op">-</span><span class="op">&gt;</span> <span class="prelude-ty">Result</span><span class="op">&lt;</span><span class="self">Self</span>::<span class="ident">SerializedValue</span>, <span class="self">Self</span>::<span class="ident">Error</span><span class="op">&gt;</span> {
